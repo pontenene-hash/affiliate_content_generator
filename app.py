@@ -340,33 +340,59 @@ def result_downloads(result: dict) -> None:
         st.download_button("WordPress用HTML", html.encode("utf-8-sig"), "affiliate_article_wordpress.html", "text/html", use_container_width=True)
 
 
+def safe_item(value, text_key: str = "text") -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return {text_key: value}
+    return {}
+
+
+def safe_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if value in (None, ""):
+        return []
+    return [value]
+
+
+def tag_text(value) -> str:
+    if isinstance(value, list):
+        return " ".join(str(tag) for tag in value)
+    return str(value or "")
+
+
 def render_social_results(plan: dict) -> None:
+    plan = safe_item(plan)
     st.header("SNS投稿内容")
     tabs = st.tabs(["Instagram", "X", "Facebook", "Threads", "LINE", "動画台本", "制作プロンプト"])
     with tabs[0]:
-        carousel = plan.get("carousel", {})
+        carousel = safe_item(plan.get("carousel"), "caption")
         st.markdown(carousel.get("caption", ""))
-        st.write(" ".join(carousel.get("hashtags", [])))
-        for index, slide in enumerate(carousel.get("slides", []), 1):
+        st.write(tag_text(carousel.get("hashtags")))
+        for index, raw_slide in enumerate(safe_list(carousel.get("slides")), 1):
+            slide = safe_item(raw_slide, "body")
             st.markdown(f"**{index}枚目｜{slide.get('title', '')}**  \n{slide.get('body', '')}")
     with tabs[1]:
-        for index, post in enumerate(plan.get("x_posts", []), 1):
+        for index, raw_post in enumerate(safe_list(plan.get("x_posts")), 1):
+            post = safe_item(raw_post)
             st.markdown(f"**パターン{index}**")
-            st.write(post.get("text", "")); st.write(" ".join(post.get("hashtags", [])))
+            st.write(post.get("text", "")); st.write(tag_text(post.get("hashtags")))
     with tabs[2]:
-        item = plan.get("facebook", {})
-        st.write(item.get("text", "")); st.write(" ".join(item.get("hashtags", [])))
+        item = safe_item(plan.get("facebook"))
+        st.write(item.get("text", "")); st.write(tag_text(item.get("hashtags")))
     with tabs[3]:
-        item = plan.get("threads", {})
-        st.write(item.get("text", "")); st.write(" ".join(item.get("hashtags", [])))
+        item = safe_item(plan.get("threads"))
+        st.write(item.get("text", "")); st.write(tag_text(item.get("hashtags")))
     with tabs[4]:
-        st.write(plan.get("line", {}).get("text", ""))
+        st.write(safe_item(plan.get("line")).get("text", ""))
     with tabs[5]:
         for key, label in (("reel", "Instagramリール"), ("youtube", "YouTube"), ("tiktok", "TikTok")):
-            item = plan.get(key, {})
+            item = safe_item(plan.get(key), "caption")
             with st.expander(label, expanded=(key == "reel")):
                 st.write(item.get("title", item.get("caption", "")))
-                for i, scene in enumerate(item.get("scenes", []), 1):
+                for i, raw_scene in enumerate(safe_list(item.get("scenes")), 1):
+                    scene = safe_item(raw_scene, "narration")
                     st.markdown(f"**シーン{i}｜{scene.get('caption', '')}**  \n{scene.get('narration', '')}")
     with tabs[6]:
         st.caption("SNS用に加え、ブログ本文の各H2・H3セクションで使えるイラストプロンプトも収録しています。各項目にSNS名入りの推奨保存ファイル名を表示します。")

@@ -43,6 +43,28 @@ def _load_json_response(raw: str) -> dict:
     raise json.JSONDecodeError("SNS構成のJSONを解析できません。", cleaned, 0)
 
 
+def _as_dict(value, text_key: str = "text") -> dict:
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        return {text_key: value}
+    return {}
+
+
+def _as_list(value) -> list:
+    if isinstance(value, list):
+        return value
+    if value in (None, ""):
+        return []
+    return [value]
+
+
+def _hashtags(value) -> str:
+    if isinstance(value, list):
+        return " ".join(str(tag) for tag in value)
+    return str(value or "")
+
+
 def _validate_social_plan(data: dict) -> None:
     required = (
         "x_posts", "threads", "facebook", "line", "carousel",
@@ -167,8 +189,20 @@ def _article_section_prompt(section: dict, number: int) -> dict:
 
 def _normalize_social_plan(data: dict, article: str) -> dict:
     """無料モデルの配列不足を補い、必ず表示可能な形へ整える。"""
-    carousel = data.setdefault("carousel", {})
-    slides = carousel.get("slides") if isinstance(carousel.get("slides"), list) else []
+    if not isinstance(data, dict):
+        raise ValueError("SNS構成が正しい形式ではありません。")
+
+    data["x_posts"] = [_as_dict(item) for item in _as_list(data.get("x_posts"))]
+    for key in ("threads", "facebook", "line"):
+        data[key] = _as_dict(data.get(key))
+    for key in ("reel", "youtube", "tiktok"):
+        item = _as_dict(data.get(key), "caption")
+        item["scenes"] = [_as_dict(scene, "narration") for scene in _as_list(item.get("scenes"))]
+        data[key] = item
+
+    carousel = _as_dict(data.get("carousel"), "caption")
+    data["carousel"] = carousel
+    slides = [_as_dict(slide, "body") for slide in _as_list(carousel.get("slides"))]
     article_sections = _article_sections(article)
     while len(slides) < 9:
         index = len(slides)
@@ -179,7 +213,10 @@ def _normalize_social_plan(data: dict, article: str) -> dict:
         })
     carousel["slides"] = slides[:9]
 
-    prompts = data.setdefault("creative_prompts", {})
+    prompts = data.get("creative_prompts")
+    if not isinstance(prompts, dict):
+        prompts = {}
+        data["creative_prompts"] = prompts
     for key, filename in MEDIA_FILENAMES.items():
         item = prompts.get(key)
         if isinstance(item, dict):
@@ -355,23 +392,26 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 
 
 def social_text(plan: dict) -> str:
+    plan = _as_dict(plan)
     parts = ["X（旧Twitter）投稿案"]
-    for index, post in enumerate(plan.get("x_posts", []), 1):
-        parts.append(f"\n【パターン{index}】\n{post.get('text', '')}\n{' '.join(post.get('hashtags', []))}")
+    for index, raw_post in enumerate(_as_list(plan.get("x_posts")), 1):
+        post = _as_dict(raw_post)
+        parts.append(f"\n【パターン{index}】\n{post.get('text', '')}\n{_hashtags(post.get('hashtags'))}")
     for key, label in (("threads", "Threads"), ("facebook", "Facebook")):
-        item = plan.get(key, {})
-        parts.append(f"\n\n{label}投稿\n{item.get('text', '')}\n{' '.join(item.get('hashtags', []))}")
-    parts.append(f"\n\nLINE配信文\n{plan.get('line', {}).get('text', '')}")
-    carousel = plan.get("carousel", {})
-    parts.append(f"\n\nInstagram投稿\n{carousel.get('caption', '')}\n{' '.join(carousel.get('hashtags', []))}")
+        item = _as_dict(plan.get(key))
+        parts.append(f"\n\n{label}投稿\n{item.get('text', '')}\n{_hashtags(item.get('hashtags'))}")
+    parts.append(f"\n\nLINE配信文\n{_as_dict(plan.get('line')).get('text', '')}")
+    carousel = _as_dict(plan.get("carousel"), "caption")
+    parts.append(f"\n\nInstagram投稿\n{carousel.get('caption', '')}\n{_hashtags(carousel.get('hashtags'))}")
     for key, label in (("reel", "Instagramリール"), ("youtube", "YouTube"), ("tiktok", "TikTok")):
-        item = plan.get(key, {})
-        parts.append(f"\n\n{label}\n{item.get('title', '')}\n{item.get('caption', item.get('description', ''))}\n{' '.join(item.get('hashtags', []))}")
+        item = _as_dict(plan.get(key), "caption")
+        parts.append(f"\n\n{label}\n{item.get('title', '')}\n{item.get('caption', item.get('description', ''))}\n{_hashtags(item.get('hashtags'))}")
     return "\n".join(parts).strip()
 
 
 def creative_prompt_text(plan: dict) -> str:
-    prompts = plan.get("creative_prompts", {})
+    plan = _as_dict(plan)
+    prompts = _as_dict(plan.get("creative_prompts"))
     labels = (
         ("x_image", "X投稿画像"),
         ("facebook_eyecatch", "Facebookアイキャッチ"),
@@ -385,7 +425,7 @@ def creative_prompt_text(plan: dict) -> str:
     )
     parts = ["画像・動画制作用プロンプト"]
     for key, label in labels:
-        item = prompts.get(key, {})
+        item = _as_dict(prompts.get(key), "prompt")
         parts.append(
             f"\n\n## {label}\nサイズ：{item.get('size', '')}\n"
             f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
@@ -395,7 +435,8 @@ def creative_prompt_text(plan: dict) -> str:
             f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
         )
     parts.append("\n\n## Instagramカルーセル9枚")
-    for item in prompts.get("instagram_carousel", []):
+    for raw_item in _as_list(prompts.get("instagram_carousel")):
+        item = _as_dict(raw_item, "prompt")
         parts.append(
             f"\n\n### {item.get('slide', '')}枚目\nサイズ：{item.get('size', '')}\n"
             f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
@@ -405,7 +446,8 @@ def creative_prompt_text(plan: dict) -> str:
             f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
         )
     parts.append("\n\n## ブログ記事の各セクション用イラスト")
-    for item in prompts.get("article_section_images", []):
+    for raw_item in _as_list(prompts.get("article_section_images")):
+        item = _as_dict(raw_item, "prompt")
         parts.append(
             f"\n\n### セクション{item.get('section', '')}｜{item.get('heading_level', '')}：{item.get('heading', '')}\n"
             f"サイズ：{item.get('size', '')}\n推奨保存ファイル名：{item.get('output_filename', '')}\n"
