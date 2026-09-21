@@ -2,6 +2,3 @@ streamlit>=1.42,<2
 google-genai>=2.0,<3
 requests>=2.32,<3
 beautifulsoup4>=4.12,<5
-Pillow>=11,<13
-numpy>=2,<3
-imageio-ffmpeg>=0.6,<1

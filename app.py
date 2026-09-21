@@ -1,5 +1,4 @@
 import ipaddress
-import json
 import os
 import re
 import socket
@@ -15,10 +14,8 @@ from google import genai
 from google.genai import types
 
 from social_tools import (
-    build_image_package,
-    build_single_video,
+    creative_prompt_text,
     generate_social_plan,
-    package_available_media,
     social_text,
 )
 
@@ -345,7 +342,7 @@ def result_downloads(result: dict) -> None:
 
 def render_social_results(plan: dict) -> None:
     st.header("SNS投稿内容")
-    tabs = st.tabs(["Instagram", "X", "Facebook", "Threads", "LINE", "動画台本"])
+    tabs = st.tabs(["Instagram", "X", "Facebook", "Threads", "LINE", "動画台本", "制作プロンプト"])
     with tabs[0]:
         carousel = plan.get("carousel", {})
         st.markdown(carousel.get("caption", ""))
@@ -371,71 +368,27 @@ def render_social_results(plan: dict) -> None:
                 st.write(item.get("title", item.get("caption", "")))
                 for i, scene in enumerate(item.get("scenes", []), 1):
                     st.markdown(f"**シーン{i}｜{scene.get('caption', '')}**  \n{scene.get('narration', '')}")
+    with tabs[6]:
+        st.caption("画像生成AI・動画生成AI・ChatGPTなどへ、そのまま貼り付けて使用できます。")
+        st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
-
-
-def render_media(plan: dict, api_key: str, brand: str, voice: str) -> None:
-    st.header("画像・動画素材")
-    media = st.session_state.setdefault("affiliate_media", {})
-    if not media.get("carousel_zip"):
-        with st.status("無料の標準イラストで投稿画像を作成しています…", expanded=False) as status:
-            try:
-                media.update(build_image_package(plan, brand, lambda m: status.write(m), "", False))
-                status.update(label="投稿画像が完成しました", state="complete")
-            except Exception as exc:
-                status.update(label="画像作成でエラーが発生しました", state="error")
-                display_error(exc)
-
-    if media.get("facebook_image"):
-        st.subheader("Facebookアイキャッチ")
-        st.image(media["facebook_image"], use_container_width=True)
-    if media.get("carousel_images"):
-        st.subheader("Instagramカルーセル9枚")
-        st.image(media["carousel_images"], width=170)
-
     st.download_button(
-        "画像・完成済み動画をZIPでダウンロード",
-        package_available_media(plan, media),
-        "affiliate_sns_media.zip",
-        "application/zip",
+        "画像・動画制作用プロンプトをダウンロード",
+        creative_prompt_text(plan).encode("utf-8-sig"),
+        "affiliate_creative_prompts.md",
+        "text/markdown",
         use_container_width=True,
     )
 
-    st.caption("動画は処理時間と無料枠を節約するため、必要な媒体だけ作成できます。完成済み素材は保持されます。")
-    for platform, asset_key, label in (
-        ("reel", "reel_video", "Instagramリール動画を作成"),
-        ("youtube", "youtube_video", "YouTube動画を作成"),
-        ("tiktok", "tiktok_video", "TikTok動画を作成"),
-    ):
-        if asset_key not in media and st.button(label, use_container_width=True, key=f"make_{platform}"):
-            client = genai.Client(api_key=api_key)
-            try:
-                with st.status(f"{label}中…", expanded=True) as status:
-                    key, data = build_single_video(client, plan, platform, brand, voice, lambda m: status.write(m), media.get("_illustration_pngs"))
-                    st.session_state["affiliate_media"][key] = data
-                    status.update(label="動画が完成しました", state="complete")
-                st.rerun()
-            except Exception as exc:
-                display_error(exc)
-            finally:
-                client.close()
-        if media.get(asset_key):
-            st.video(media[asset_key])
-            filename = {"reel": "instagram_reel.mp4", "youtube": "youtube_video.mp4", "tiktok": "tiktok_video.mp4"}[platform]
-            st.download_button(f"{filename}をダウンロード", media[asset_key], filename, "video/mp4", use_container_width=True, key=f"download_{platform}")
-
 
 st.title("アフィリエイト記事・SNS一括生成")
-st.caption("商品ページを読み込み、SEO記事・SNS投稿・画像・動画素材までまとめて作成します。")
+st.caption("商品ページを読み込み、SEO記事・SNS投稿・画像／動画制作用プロンプトまでまとめて作成します。")
 
 with st.sidebar:
     st.header("無料AI設定")
     api_key = st.text_input("Gemini APIキー", value=secret_value("GEMINI_API_KEY") or "", type="password")
     model = st.text_input("モデル", value=secret_value("GEMINI_MODEL") or "gemini-3.5-flash-lite")
     st.caption("Google AI Studioの無料枠を利用します。APIキーはファイルに保存されません。")
-    st.divider()
-    brand = st.text_input("画像・動画に表示する名称", value=secret_value("BRAND_NAME") or "PONTE")
-    voice = st.selectbox("動画ナレーション", ["Sulafat", "Achird", "Aoede", "Kore", "Puck"], index=0)
 
 product_url = st.text_input("アフィリエイト商品のページURL", placeholder="https://example.com/product")
 affiliate_url = st.text_input("アフィリ用URL", placeholder="https://example.com/affiliate-link")
@@ -461,12 +414,11 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
             outline = create_outline(client, model, page, intent, status.write)
             status.write("ステップ3：PREP法で完成本文を執筆しています…")
             article = write_article(client, model, page, safe_affiliate_url, intent, outline, status.write)
-            status.write("各SNS向けの投稿文と動画台本を作成しています…")
+            status.write("各SNS向けの投稿文・台本・制作プロンプトを作成しています…")
             plan = generate_social_plan(client, model, article, call_llm, safe_affiliate_url)
             st.session_state["affiliate_result"] = {"intent": intent, "outline": outline, "article": article, "page": page}
             st.session_state["affiliate_social_plan"] = plan
-            st.session_state.pop("affiliate_media", None)
-            status.update(label="記事・SNS投稿が完成しました", state="complete")
+            status.update(label="記事・SNS投稿・制作プロンプトが完成しました", state="complete")
     except Exception as exc:
         display_error(exc)
     finally:
@@ -486,8 +438,6 @@ if result:
 if plan:
     st.divider()
     render_social_results(plan)
-    st.divider()
-    render_media(plan, api_key, brand.strip() or "PONTE", voice)
 
 if result:
     with st.expander("成約率とSEOを高めるための実践提案", expanded=False):
@@ -504,8 +454,8 @@ with st.expander("無料で使うための注意点"):
     st.markdown("""
 - Google AI StudioでGemini APIキーを作成し、有料請求を設定しなければ無料枠の範囲で利用できます。
 - 無料枠には回数・速度の上限があります。上限時は時間をおいて再実行してください。
-- 画像は追加APIを使わない標準イラスト方式です。
-- 動画のナレーションはGemini TTSの利用可能枠を消費します。
+- このアプリは画像・動画そのものを生成しないため、追加の画像・動画API料金は発生しません。
+- 出力された制作プロンプトを、お使いの画像生成AI・動画生成AIへ貼り付けて使用してください。
 - 公開前に価格、在庫、特典、薬機法・景品表示法に関わる表現を必ず確認してください。
 - Instagramの本文URLは通常クリックできないため、プロフィールリンクにもアフィリURLを設定してください。
 """)
