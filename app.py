@@ -395,7 +395,7 @@ def render_social_results(plan: dict) -> None:
                     scene = safe_item(raw_scene, "narration")
                     st.markdown(f"**シーン{i}｜{scene.get('caption', '')}**  \n{scene.get('narration', '')}")
     with tabs[6]:
-        st.caption("SNS用に加え、ブログ本文の各H2・H3セクションで使えるイラストプロンプトも収録しています。各項目にSNS名入りの推奨保存ファイル名を表示します。")
+        st.caption("SNS名は管理用の推奨保存ファイル名だけに表示し、画像・動画の中には入れません。動画プロンプトには穏やかな日本語ナレーションとBGMの指示も含みます。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(

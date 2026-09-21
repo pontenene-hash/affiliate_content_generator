@@ -104,11 +104,32 @@ def _safe_filename_part(value: str, limit: int = 24) -> str:
 
 
 def _add_filename_instruction(item: dict, filename: str) -> dict:
+    """保存名は管理用メタデータにだけ入れ、生成プロンプト本文には混ぜない。"""
     item["output_filename"] = filename
-    prompt = item.get("prompt", "")
-    instruction = f"完成データの推奨保存ファイル名は『{filename}』とする。"
-    if instruction not in prompt:
-        item["prompt"] = f"{prompt.rstrip()} {instruction}".strip()
+    prompt = str(item.get("prompt", ""))
+    item["prompt"] = re.sub(
+        r"\s*完成データの推奨保存ファイル名は『[^』]+』とする。?",
+        "",
+        prompt,
+    ).strip()
+    return item
+
+
+def _add_video_audio_instructions(item: dict) -> dict:
+    prompt = str(item.get("prompt", "")).rstrip()
+    instructions = (
+        "画面内にはInstagram、YouTube、TikTok、X、FacebookなどのSNS名、SNSロゴ、アプリアイコン、"
+        "ユーザー名、保存ファイル名、拡張子、透かしを表示しない。SNS名は制作データの管理用名称にだけ使用する。"
+        "動画全編に、落ち着きと温かみのある聞き取りやすい日本語ナレーションを必ず入れる。"
+        "ナレーションは台本を自然な速度で読み、機械的・早口・過度に感情的な話し方を避ける。"
+        "動画全編に、穏やかで明るい著作権上利用可能なインストゥルメンタルBGMを入れる。"
+        "BGMはナレーションより十分小さくし、発話中は自動的に音量を下げ、声を明瞭に聞かせる。"
+        "冒頭と終了時はBGMを自然にフェードイン・フェードアウトさせる。"
+        "ナレーション、BGM、テロップの内容とタイミングを一致させる。無音、音切れ、声がBGMに埋もれる状態は禁止し、"
+        "音声が入っていない場合は必ず音声付きで再生成する。"
+    )
+    if "音声が入っていない場合は必ず音声付きで再生成する" not in prompt:
+        item["prompt"] = f"{prompt} {instructions}".strip()
     return item
 
 
@@ -221,6 +242,8 @@ def _normalize_social_plan(data: dict, article: str) -> dict:
         item = prompts.get(key)
         if isinstance(item, dict):
             _add_filename_instruction(item, filename)
+            if key in ("reel_video", "youtube_video", "tiktok_video"):
+                _add_video_audio_instructions(item)
     existing = prompts.get("instagram_carousel") if isinstance(prompts.get("instagram_carousel"), list) else []
     normalized = []
     for index, slide in enumerate(carousel["slides"], 1):
@@ -309,6 +332,8 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 動画プロンプト共通条件：
 - 必ず「プロのイラストレーターと映像ディレクターが共同制作する、求心力のある高品質なイラスト動画」と明記
 - すべての動画プロンプトの冒頭に「各フレームを映像表示エリアとテロップ専用エリアへ完全分離する」と明記する
+- Instagram、YouTube、TikTokなどのSNS名、SNSロゴ、アプリアイコン、ユーザー名、保存ファイル名、拡張子を動画内に表示しない
+- SNS名は管理用の推奨保存ファイル名だけに使い、映像、背景、テロップ、字幕、エンドカードには入れない
 - 冒頭3秒のフック、場面ごとの構図、人物の動き、カメラワーク、テンポ、転換、光、配色を具体化
 - 冒頭3秒に強い日本語キャッチコピーを画面内へ大きく表示する
 - 各シーンに短い日本語テロップを直接入れ、ナレーションの要点が無音でも伝わるようにする
@@ -323,6 +348,12 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 - 全フレームで領域境界を固定し、テロップや背景帯が映像表示エリアへ越境した場合は修正して再生成する
 - 指定した日本語を一字一句正確に表示し、誤字や文字化けがあれば修正・再生成するよう明記
 - 不自然な身体変形、激しい点滅、過剰な動き、ロゴ、透かし、意味不明な文字を避ける
+- 動画全編に、落ち着きと温かみのある聞き取りやすい日本語ナレーションを必ず入れる
+- ナレーションは台本を自然な速度で読み、機械的、早口、過度に感情的な話し方を避ける
+- 穏やかで明るい、著作権上利用可能なインストゥルメンタルBGMを動画全編に入れる
+- BGMはナレーションより十分小さくし、発話中は自動的に音量を下げて声を明瞭にする
+- 冒頭と終了時はBGMを自然にフェードイン・フェードアウトさせ、ナレーション・BGM・テロップのタイミングを合わせる
+- 無音、音切れ、BGMで声が聞こえない状態は禁止。音声が生成されなかった場合は、必ず音声付きで再生成する
 
 制作プロンプトの独立性：
 - creative_prompts内の各promptは、1件だけコピーしても成立する完全な指示文にする
@@ -330,6 +361,7 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 - 各画像promptには、その媒体の具体的なフォント種類・太さ・最低pxサイズ・行間・1行の文字数上限も必ず明記する
 - 各動画promptには「映像表示エリアとテロップ専用エリアの完全分離」「全フレームで境界固定」「SNS操作UIの安全余白」「越境時の再生成」を必ず繰り返して明記する
 - 各動画promptには、その媒体の具体的なテロップ最低pxサイズ・太さ・最大行数・行間も必ず明記する
+- 各動画promptには「SNS名・ロゴ・保存ファイル名を画面に表示しない」「穏やかな日本語ナレーション」「穏やかなBGM」「ナレーション優先の音量調整」「無音時の再生成」を必ず明記する
 - 「上記と同じ」「共通条件に従う」など、単独では意味が通じない省略表現を使わない
 
 次のJSON以外は出力しないでください：
