@@ -2,6 +2,24 @@ import json
 import re
 
 
+CAROUSEL_LAYOUT = "上部見出し18％・中央イラスト57％・下部説明カード25％。3領域を完全分離し、中央イラストへ文字を重ねない"
+CAROUSEL_FONT = "太めの日本語ゴシック体。大見出し64〜80px、説明文36〜44px以上、行間1.25〜1.4倍、説明は最大4行"
+ARTICLE_IMAGE_LAYOUT = "左側30％をテキスト専用エリア、右側70％をイラスト表示エリアとして完全分離。人物・商品・重要物へ文字や帯を重ねない"
+ARTICLE_IMAGE_FONT = "太めの日本語ゴシック体。見出し56〜72px、補足30〜38px以上、行間1.25〜1.4倍、1行15〜18文字以内"
+
+MEDIA_FILENAMES = {
+    "x_image": "X_投稿画像.png",
+    "facebook_eyecatch": "Facebook_アイキャッチ.png",
+    "threads_image": "Threads_投稿画像.png",
+    "line_image": "LINE_配信用画像.png",
+    "reel_video": "Instagram_リール動画.mp4",
+    "youtube_thumbnail": "YouTube_サムネイル.png",
+    "youtube_video": "YouTube_動画.mp4",
+    "tiktok_cover": "TikTok_表紙.png",
+    "tiktok_video": "TikTok_動画.mp4",
+}
+
+
 def _strip_code_fence(text: str) -> str:
     cleaned = text.strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
@@ -45,6 +63,141 @@ def _validate_social_plan(data: dict) -> None:
         raise ValueError("画像・動画制作用プロンプトが不足しています。")
     if len(prompts.get("instagram_carousel", [])) != 9:
         raise ValueError("Instagramカルーセル用プロンプトが9枚ではありません。")
+    if not prompts.get("article_section_images"):
+        raise ValueError("記事各セクション用の画像プロンプトがありません。")
+
+
+def _plain_text(value: str, limit: int = 90) -> str:
+    value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value or "")
+    value = re.sub(r"[*_`>#]", "", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    return value[:limit]
+
+
+def _safe_filename_part(value: str, limit: int = 24) -> str:
+    value = _plain_text(value, limit)
+    value = re.sub(r'[\\/:*?"<>|]', "", value)
+    value = re.sub(r"\s+", "_", value).strip("._")
+    return value or "記事セクション"
+
+
+def _add_filename_instruction(item: dict, filename: str) -> dict:
+    item["output_filename"] = filename
+    prompt = item.get("prompt", "")
+    instruction = f"完成データの推奨保存ファイル名は『{filename}』とする。"
+    if instruction not in prompt:
+        item["prompt"] = f"{prompt.rstrip()} {instruction}".strip()
+    return item
+
+
+def _article_sections(article: str) -> list[dict]:
+    """Markdown本文からH2/H3と直後の要点を抽出する。"""
+    sections = []
+    current = None
+    body = []
+    for raw in article.splitlines():
+        heading = re.match(r"^(#{2,3})\s+(.+)$", raw.strip())
+        if heading:
+            if current:
+                current["summary"] = _plain_text(" ".join(body), 120)
+                sections.append(current)
+            current = {
+                "level": "H2" if len(heading.group(1)) == 2 else "H3",
+                "heading": _plain_text(heading.group(2), 36),
+            }
+            body = []
+        elif current and raw.strip():
+            body.append(raw.strip())
+    if current:
+        current["summary"] = _plain_text(" ".join(body), 120)
+        sections.append(current)
+    return sections[:30]
+
+
+def _carousel_prompt(slide: dict, number: int) -> dict:
+    title = _plain_text(slide.get("title", ""), 22) or ("内容を確認" if number < 9 else "詳しく確認する")
+    body = _plain_text(slide.get("body", ""), 70) or "記事の要点を短く分かりやすく伝える"
+    item = {
+        "slide": number,
+        "size": "1080×1350",
+        "catch_copy": title,
+        "body_text": body,
+        "layout": CAROUSEL_LAYOUT,
+        "font_spec": CAROUSEL_FONT,
+        "prompt": (
+            "キャンバスをテキスト専用エリアとイラスト表示エリアに完全分離する。"
+            "広告・出版分野で経験豊富なプロのイラストレーターが制作する、細部まで丁寧で求心力のある商用イラスト。"
+            f"1080×1350。{CAROUSEL_LAYOUT}。上部に『{title}』、下部カードに『{body}』を一字一句正確に入れる。"
+            f"{CAROUSEL_FONT}。文字が収まらない場合はフォントを小さくせず文章を短くする。"
+            "中央57％には人物・商品・背景だけを描き、文字・数字・帯・吹き出しを1ピクセルも侵入させない。"
+            "清潔感、信頼感、親しみやすさのある配色と自然な表情。不自然な手指、ロゴ、透かし、文字化けを避ける。"
+            "スマートフォン縮小表示で確認し、越境・誤字・読みにくさがあれば修正して再生成する。"
+        ),
+    }
+    return _add_filename_instruction(item, f"Instagram_カルーセル_{number:02d}.png")
+
+
+def _article_section_prompt(section: dict, number: int) -> dict:
+    heading = section.get("heading", "記事のポイント")
+    summary = section.get("summary", "このセクションの要点を視覚的に分かりやすく表現する")
+    item = {
+        "section": number,
+        "heading_level": section.get("level", "H2"),
+        "heading": heading,
+        "size": "1200×675",
+        "catch_copy": heading,
+        "sub_copy": summary[:55],
+        "layout": ARTICLE_IMAGE_LAYOUT,
+        "font_spec": ARTICLE_IMAGE_FONT,
+        "prompt": (
+            "キャンバスをテキスト専用エリアとイラスト表示エリアの2領域へ完全分離する。"
+            "広告・出版分野で経験豊富なプロのイラストレーターが制作する、細部まで丁寧で求心力のある高品質な商用イラスト。"
+            f"ブログ記事の『{heading}』セクションに挿入する横長画像、1200×675。内容の要点は『{summary}』。"
+            f"{ARTICLE_IMAGE_LAYOUT}。左側に見出し『{heading}』と、必要な場合のみ短い補足『{summary[:55]}』を正確に入れる。"
+            f"{ARTICLE_IMAGE_FONT}。文字が収まらない場合はフォントを小さくせず補足文を短く要約する。"
+            "右側にはセクション内容を一目で理解できる人物・表情・仕草・背景・小物を具体的かつ自然に描く。"
+            "右側のイラスト領域には文字・数字・帯・吹き出しを一切置かず、左側の文字や装飾も1ピクセルも越境させない。"
+            "清潔感、信頼感、親しみやすさのある配色と十分な余白を使い、素材集風、幼すぎる絵、不自然な手指、"
+            "実在ロゴ、透かし、文字化けを避ける。スマートフォン表示で可読性と領域分離を検査し、問題があれば再生成する。"
+        ),
+    }
+    filename = f"ブログ_{section.get('level', 'H2')}_{number:02d}_{_safe_filename_part(heading)}.png"
+    return _add_filename_instruction(item, filename)
+
+
+def _normalize_social_plan(data: dict, article: str) -> dict:
+    """無料モデルの配列不足を補い、必ず表示可能な形へ整える。"""
+    carousel = data.setdefault("carousel", {})
+    slides = carousel.get("slides") if isinstance(carousel.get("slides"), list) else []
+    article_sections = _article_sections(article)
+    while len(slides) < 9:
+        index = len(slides)
+        source = article_sections[min(index, len(article_sections) - 1)] if article_sections else {}
+        slides.append({
+            "title": source.get("heading", "まとめ" if index == 8 else f"ポイント{index + 1}"),
+            "body": source.get("summary", "記事の要点を分かりやすく確認しましょう。")[:80],
+        })
+    carousel["slides"] = slides[:9]
+
+    prompts = data.setdefault("creative_prompts", {})
+    for key, filename in MEDIA_FILENAMES.items():
+        item = prompts.get(key)
+        if isinstance(item, dict):
+            _add_filename_instruction(item, filename)
+    existing = prompts.get("instagram_carousel") if isinstance(prompts.get("instagram_carousel"), list) else []
+    normalized = []
+    for index, slide in enumerate(carousel["slides"], 1):
+        fallback = _carousel_prompt(slide, index)
+        supplied = existing[index - 1] if index <= len(existing) and isinstance(existing[index - 1], dict) else {}
+        normalized.append({key: supplied.get(key) or value for key, value in fallback.items()})
+        normalized[-1]["slide"] = index
+        _add_filename_instruction(normalized[-1], f"Instagram_カルーセル_{index:02d}.png")
+    prompts["instagram_carousel"] = normalized
+    prompts["article_section_images"] = [
+        _article_section_prompt(section, index)
+        for index, section in enumerate(article_sections, 1)
+    ] or [_article_section_prompt({"level": "H2", "heading": "記事のポイント", "summary": "記事の要点を分かりやすく伝える"}, 1)]
+    return data
 
 
 def generate_social_plan(client, model: str, article: str, call_llm, affiliate_url: str = "") -> dict:
@@ -193,6 +346,7 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
         )
         try:
             data = _load_json_response(raw)
+            data = _normalize_social_plan(data, article)
             _validate_social_plan(data)
             return data
         except (json.JSONDecodeError, ValueError) as exc:
@@ -234,6 +388,7 @@ def creative_prompt_text(plan: dict) -> str:
         item = prompts.get(key, {})
         parts.append(
             f"\n\n## {label}\nサイズ：{item.get('size', '')}\n"
+            f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
             f"画像・動画内キャッチコピー：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
             f"画像内補足：{item.get('sub_copy', '')}\n"
             f"レイアウト：{item.get('layout', '')}\n"
@@ -243,9 +398,19 @@ def creative_prompt_text(plan: dict) -> str:
     for item in prompts.get("instagram_carousel", []):
         parts.append(
             f"\n\n### {item.get('slide', '')}枚目\nサイズ：{item.get('size', '')}\n"
+            f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
             f"イラスト内の大見出し：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
             f"イラスト内の説明文：{item.get('body_text', '')}\n"
             f"レイアウト：{item.get('layout', '')}\n"
+            f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
+        )
+    parts.append("\n\n## ブログ記事の各セクション用イラスト")
+    for item in prompts.get("article_section_images", []):
+        parts.append(
+            f"\n\n### セクション{item.get('section', '')}｜{item.get('heading_level', '')}：{item.get('heading', '')}\n"
+            f"サイズ：{item.get('size', '')}\n推奨保存ファイル名：{item.get('output_filename', '')}\n"
+            f"画像内キャッチコピー：{item.get('catch_copy', '')}\n"
+            f"画像内補足：{item.get('sub_copy', '')}\nレイアウト：{item.get('layout', '')}\n"
             f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
         )
     return "\n".join(parts).strip()
