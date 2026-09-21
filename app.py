@@ -369,7 +369,7 @@ def render_social_results(plan: dict) -> None:
                 for i, scene in enumerate(item.get("scenes", []), 1):
                     st.markdown(f"**シーン{i}｜{scene.get('caption', '')}**  \n{scene.get('narration', '')}")
     with tabs[6]:
-        st.caption("画像生成AI・動画生成AI・ChatGPTなどへ、そのまま貼り付けて使用できます。")
+        st.caption("各画像・動画にキャッチコピーや説明文を直接入れる指示です。画像生成AI・動画生成AI・ChatGPTなどへ貼り付けて使用できます。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(

@@ -75,14 +75,24 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 - 清潔感、信頼感、親しみやすさを備え、ひと目でテーマが伝わる魅力的なビジュアル
 - 安価な素材集風、幼すぎる絵、単調な棒人間、過剰な誇張、不自然な手指、文字化けを避ける
 - 実在ブランドのロゴ、著名キャラクター、特定作家の画風を使用しない
-- 日本語文字は画像AIに描かせず「文字なし・指定位置に文字用の余白」と指示し、overlay_textを別に出す
-- カルーセル9枚は同じ人物設定・画風・カラーパレットで統一しつつ、構図を変えて単調さを防ぐ
+- 画像の中に、読者の目を止める短い日本語キャッチコピーを必ず入れる
+- キャッチコピーは一目で読める大きな太字。補足文は短くし、スマートフォンでも読める文字サイズにする
+- 文字と背景のコントラストを高くし、必要に応じて半透明帯、縁取り、影を使う
+- 文字が人物の顔、手、商品、重要なイラスト要素に重ならないよう、安全余白のある構図にする
+- 指定した日本語を一字一句正確に描画し、誤字、文字化け、意味不明な記号、余分な文字を入れない
+- 日本語が崩れた場合は、正しい文章になるまで文字部分を修正・再生成するよう明記
+- カルーセル9枚は同じ人物設定・画風・カラーパレット・文字デザインで統一しつつ、構図を変えて単調さを防ぐ
+- カルーセルは各イラスト内に「大見出し」と「2〜4行の短い説明文」を直接入れる
+- カルーセル1枚目は強い表紙コピー、2〜8枚目は内容がすぐ分かる見出しと説明、9枚目は行動喚起を入れる
 
 動画プロンプト共通条件：
 - 必ず「プロのイラストレーターと映像ディレクターが共同制作する、求心力のある高品質なイラスト動画」と明記
 - 冒頭3秒のフック、場面ごとの構図、人物の動き、カメラワーク、テンポ、転換、光、配色を具体化
-- 画面内の文字は後入れ前提とし、字幕用の安全余白を確保
-- 不自然な身体変形、激しい点滅、過剰な動き、ロゴ、透かし、文字化けを避ける
+- 冒頭3秒に強い日本語キャッチコピーを画面内へ大きく表示する
+- 各シーンに短い日本語テロップを直接入れ、ナレーションの要点が無音でも伝わるようにする
+- テロップはスマートフォンで読める大きさ、高コントラスト、字幕用の安全余白を確保する
+- 指定した日本語を一字一句正確に表示し、誤字や文字化けがあれば修正・再生成するよう明記
+- 不自然な身体変形、激しい点滅、過剰な動き、ロゴ、透かし、意味不明な文字を避ける
 
 次のJSON以外は出力しないでください：
 {{
@@ -112,18 +122,18 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
     "scenes": [{{"caption": "字幕", "narration": "読み上げ文"}}]
   }},
   "creative_prompts": {{
-    "x_image": {{"size": "1200×675", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
-    "facebook_eyecatch": {{"size": "1200×630", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
-    "threads_image": {{"size": "1080×1080", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
-    "line_image": {{"size": "1200×900", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
+    "x_image": {{"size": "1200×675", "catch_copy": "画像内に入れる短いキャッチコピー", "sub_copy": "画像内に入れる短い補足", "prompt": "キャッチコピーと補足を画像内へ正確に配置する完成プロンプト"}},
+    "facebook_eyecatch": {{"size": "1200×630", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "prompt": "文字入りの完成プロンプト"}},
+    "threads_image": {{"size": "1080×1080", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "prompt": "文字入りの完成プロンプト"}},
+    "line_image": {{"size": "1200×900", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "prompt": "文字入りの完成プロンプト"}},
     "instagram_carousel": [
-      {{"slide": 1, "size": "1080×1350", "overlay_text": "後入れ文字", "prompt": "1枚単独で使える完成された詳細プロンプト"}}
+      {{"slide": 1, "size": "1080×1350", "catch_copy": "イラスト内の大見出し", "body_text": "イラスト内に直接入れる2〜4行の説明文", "prompt": "指定した見出しと説明文をイラスト内へ正確に配置する、1枚単独で使える完成プロンプト"}}
     ],
-    "reel_video": {{"size": "1080×1920", "duration": "45〜60秒", "prompt": "全シーンを含む完成された動画生成プロンプト"}},
-    "youtube_thumbnail": {{"size": "1280×720", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
-    "youtube_video": {{"size": "1920×1080", "duration": "3〜5分", "prompt": "全シーンを含む完成された動画生成プロンプト"}},
-    "tiktok_cover": {{"size": "1080×1920", "overlay_text": "後入れ文字", "prompt": "完成された詳細プロンプト"}},
-    "tiktok_video": {{"size": "1080×1920", "duration": "45〜60秒", "prompt": "全シーンを含む完成された動画生成プロンプト"}}
+    "reel_video": {{"size": "1080×1920", "duration": "45〜60秒", "catch_copy": "冒頭3秒に入れるキャッチコピー", "prompt": "全シーンに日本語テロップを直接入れる完成動画プロンプト"}},
+    "youtube_thumbnail": {{"size": "1280×720", "catch_copy": "サムネイル内キャッチコピー", "sub_copy": "サムネイル内補足", "prompt": "文字入りの完成プロンプト"}},
+    "youtube_video": {{"size": "1920×1080", "duration": "3〜5分", "catch_copy": "冒頭キャッチコピー", "prompt": "全シーンに日本語テロップを直接入れる完成動画プロンプト"}},
+    "tiktok_cover": {{"size": "1080×1920", "catch_copy": "表紙内キャッチコピー", "sub_copy": "表紙内補足", "prompt": "文字入りの完成プロンプト"}},
+    "tiktok_video": {{"size": "1080×1920", "duration": "45〜60秒", "catch_copy": "冒頭3秒に入れるキャッチコピー", "prompt": "全シーンに日本語テロップを直接入れる完成動画プロンプト"}}
   }}
 }}"""
     last_error = None
@@ -176,12 +186,14 @@ def creative_prompt_text(plan: dict) -> str:
         item = prompts.get(key, {})
         parts.append(
             f"\n\n## {label}\nサイズ：{item.get('size', '')}\n"
-            f"後入れ文字：{item.get('overlay_text', '')}\n{item.get('prompt', '')}"
+            f"画像・動画内キャッチコピー：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
+            f"画像内補足：{item.get('sub_copy', '')}\n{item.get('prompt', '')}"
         )
     parts.append("\n\n## Instagramカルーセル9枚")
     for item in prompts.get("instagram_carousel", []):
         parts.append(
             f"\n\n### {item.get('slide', '')}枚目\nサイズ：{item.get('size', '')}\n"
-            f"後入れ文字：{item.get('overlay_text', '')}\n{item.get('prompt', '')}"
+            f"イラスト内の大見出し：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
+            f"イラスト内の説明文：{item.get('body_text', '')}\n{item.get('prompt', '')}"
         )
     return "\n".join(parts).strip()
