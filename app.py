@@ -212,6 +212,7 @@ def create_outline(client, model: str, page: dict, intent: str, callback=None) -
 - 悩み、原因・選び方、商品特徴、メリット、注意点、向く人・向かない人、使い方または申込手順、FAQ、まとめを自然な順序で扱う
 - 口コミが資料にない場合は口コミ見出しを作らない
 - 読者に不利益な情報や注意点も隠さない
+- 最後の「まとめ」では、商品が向く人を再確認し、読者が自分に合うと感じた場合だけ公式サイトの確認へ自然に進める構成にする
 - Markdownの # / ## / ### を使う
 
 構成案だけを出力してください。""",
@@ -261,6 +262,10 @@ def write_article(
 - アフィリエイトリンクをMarkdownリンクで、導入後・比較検討後・まとめ付近の最大3か所に自然に設置
 - リンク文言は「公式サイトで詳しく確認する」など内容が分かる表現にする
 - 過度な煽り、限定性の捏造、効果保証は禁止
+- 最後の「まとめ」では、商品が向く人・向かない人を短く再確認する
+- 商品が向く読者に対して、記事で確認できた特徴と選ぶ理由を1〜2文で誠実に示し、押し売りにならない言葉で購入検討を勧める
+- まとめの最後に「自分の悩みや希望に合いそうな方は、公式サイトで詳しい内容を確認してみてください」などの自然な案内とアフィリエイトリンクを必ず置く
+- 「今すぐ買わないと損」「絶対に効果がある」などの強引な表現は使わない
 - FAQを3〜5問含める
 - # は記事タイトル、## はH2、### はH3にする
 - 末尾に公開前チェックとして、変動しやすい価格・在庫・特典は公式サイトで確認する旨を短く記載
@@ -393,9 +398,14 @@ def render_social_results(plan: dict) -> None:
                 st.write(item.get("title", item.get("caption", "")))
                 for i, raw_scene in enumerate(safe_list(item.get("scenes")), 1):
                     scene = safe_item(raw_scene, "narration")
-                    st.markdown(f"**シーン{i}｜{scene.get('caption', '')}**  \n{scene.get('narration', '')}")
+                    duration = f"（{scene.get('duration')}）" if scene.get("duration") else ""
+                    st.markdown(
+                        f"**シーン{i}{duration}｜{scene.get('caption', '')}**  \n"
+                        f"ナレーション：{scene.get('narration', '')}  \n"
+                        f"画面指示：{scene.get('direction', '')}"
+                    )
     with tabs[6]:
-        st.caption("SNS名は管理用の推奨保存ファイル名だけに表示し、画像・動画の中には入れません。動画プロンプトには穏やかな日本語ナレーションとBGMの指示も含みます。")
+        st.caption("動画は最初に大きなキャッチコピー入りの表紙、最後に自然な商品案内を入れます。大きな文字、自然な日本語改行、穏やかなナレーションとBGMも指定します。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(
