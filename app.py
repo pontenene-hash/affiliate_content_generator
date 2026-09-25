@@ -402,10 +402,10 @@ def render_social_results(plan: dict) -> None:
                     st.markdown(
                         f"**シーン{i}{duration}｜{scene.get('caption', '')}**  \n"
                         f"ナレーション：{scene.get('narration', '')}  \n"
-                        f"画面指示：{scene.get('direction', '')}"
+                        f"画面指示：{scene.get('visual', scene.get('direction', ''))}"
                     )
     with tabs[6]:
-        st.caption("動画は最初に大きなキャッチコピー入りの表紙、最後に自然な商品案内を入れます。大きな文字、自然な日本語改行、穏やかなナレーションとBGMも指定します。")
+        st.caption("大きな文字、自然な日本語改行、明るく穏やかなBGM、成人女性の穏やかなナレーション、短い場面転換を指定します。プロのイラストレーターとマーケティングコンサルタントによる最終検品も含みます。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(
