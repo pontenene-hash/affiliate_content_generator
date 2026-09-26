@@ -401,11 +401,11 @@ def render_social_results(plan: dict) -> None:
                     duration = f"（{scene.get('duration')}）" if scene.get("duration") else ""
                     st.markdown(
                         f"**シーン{i}{duration}｜{scene.get('caption', '')}**  \n"
-                        f"ナレーション：{scene.get('narration', '')}  \n"
+                        f"タイピングテロップ：{scene.get('narration', '')}  \n"
                         f"画面指示：{scene.get('visual', scene.get('direction', ''))}"
                     )
     with tabs[6]:
-        st.caption("大きな文字、自然な日本語改行、明るく穏やかなBGM、成人女性の穏やかなナレーション、短い場面転換を指定します。プロのイラストレーターとマーケティングコンサルタントによる最終検品も含みます。")
+        st.caption("音声ナレーションは使わず、大きな日本語テロップをタイピング風に表示します。3.5〜4秒の表紙、明るくポップなBGM、自然な改行、イラストとの完全分離、プロによる最終検品を指定します。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(
