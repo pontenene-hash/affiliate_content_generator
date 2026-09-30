@@ -405,7 +405,7 @@ def render_social_results(plan: dict) -> None:
                         f"画面指示：{scene.get('visual', scene.get('direction', ''))}"
                     )
     with tabs[6]:
-        st.caption("音声ナレーションは使わず、大きな日本語テロップをタイピング風に表示します。3.5〜4秒の表紙、明るくポップなBGM、自然な改行、イラストとの完全分離、プロによる最終検品を指定します。")
+        st.caption("全素材に20項目の販促デザイン品質基準を適用します。音声ナレーションなしのタイピング風テロップ、3.5〜4秒の表紙、明るく心地よいBGM、自然な改行、正式名称の厳守、プロ3視点による再検品まで指定します。")
         st.markdown(creative_prompt_text(plan))
     st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
     st.download_button(
