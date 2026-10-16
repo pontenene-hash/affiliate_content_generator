@@ -44,6 +44,7 @@ FALLBACK_MODELS = (
 )
 MAX_PAGE_CHARS = 24_000
 PAGE_REQUEST_TIMEOUT = 25
+READER_REQUEST_TIMEOUT = 45
 JST = timezone(timedelta(hours=9))
 
 
@@ -118,10 +119,10 @@ def call_grounded_research(
 ) -> str:
     """商品名だけの入力時に、Geminiの検索連携で公開情報を調査する。"""
     last_error: Optional[Exception] = None
+    if status_callback:
+        status_callback(f"「{product_name}」の公開情報を検索しています…")
     for candidate in unique_models(model):
         try:
-            if status_callback:
-                status_callback(f"「{product_name}」の公開情報を検索しています…")
             response = client.models.generate_content(
                 model=candidate,
                 contents=f"""次の商品をWebで調査し、日本語の調査資料を作成してください。
@@ -164,10 +165,10 @@ def call_url_research(
 ) -> str:
     """通常のHTTP取得を拒否する公開ページをGemini URL Contextで読む。"""
     last_error: Optional[Exception] = None
+    if status_callback:
+        status_callback("公式URLを別方式で読み込んでいます…")
     for candidate in unique_models(model):
         try:
-            if status_callback:
-                status_callback("公式URLを別方式で読み込んでいます…")
             response = client.models.generate_content(
                 model=candidate,
                 contents=f"""次の公開ページだけを主な根拠として、商品調査資料を日本語で作成してください。
@@ -204,7 +205,14 @@ def call_url_research(
 
 def friendly_gemini_error(exc: Optional[Exception]) -> str:
     """APIキーなどの秘密情報を出さず、利用者が直せる原因だけを返す。"""
-    message = str(exc or "").lower()
+    messages: list[str] = []
+    current = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        messages.append(str(current))
+        current = current.__cause__ or current.__context__
+    message = " ".join(messages).lower()
     if any(token in message for token in ("429", "resource_exhausted", "quota")):
         return "無料利用枠の上限または混雑の可能性があります。時間をおいて再実行してください。"
     if any(token in message for token in ("401", "unauthenticated", "api_key_invalid")):
@@ -276,6 +284,35 @@ def fetch_page(url: str) -> dict[str, str]:
     if len(combined.strip()) < 200:
         raise ValueError("商品情報を十分に取得できませんでした。別の商品ページURLをお試しください。")
     return {"url": final_url, "title": title, "text": combined[:MAX_PAGE_CHARS]}
+
+
+def fetch_page_via_reader(url: str) -> dict[str, str]:
+    """無料の公開Readerを使い、取得制限のある公開ページをMarkdown化する。"""
+    reader_url = f"https://r.jina.ai/{url}"
+    response = requests.get(
+        reader_url,
+        headers={
+            "Accept": "text/plain",
+            "User-Agent": "PONTE-Content-Generator/1.0",
+            "X-Locale": "ja-JP",
+        },
+        timeout=READER_REQUEST_TIMEOUT,
+        allow_redirects=True,
+    )
+    response.raise_for_status()
+    if len(response.content) > 5_000_000:
+        raise ValueError("Readerの取得結果が大きすぎます。")
+    response.encoding = response.apparent_encoding or response.encoding
+    text = response.text.strip()
+    if len(text) < 200:
+        raise ValueError("Readerから十分な商品情報を取得できませんでした。")
+    title_match = re.search(r"(?im)^Title:\s*(.+)$", text)
+    title = title_match.group(1).strip() if title_match else ""
+    return {
+        "url": url,
+        "title": title,
+        "text": f"取得元：{url}\n\n{text[:MAX_PAGE_CHARS]}",
+    }
 
 
 def analyze_intent(client, model: str, page: dict, promotion_context: str, callback=None) -> str:
@@ -703,6 +740,12 @@ destination_url = st.text_input(destination_label, placeholder=destination_place
 with st.expander("店舗・商品情報（任意）"):
     manufacturer = st.text_input("メーカー名")
     store_name = st.text_input("店舗・院・サービスの正式名称")
+    product_notes = st.text_area(
+        "商品情報の補足（任意）",
+        placeholder="自動取得できない場合に、公式ページの商品説明・原材料・内容量・価格・注意事項などを貼り付けてください。",
+        help="通常は空欄で構いません。入力した内容は公式URLの取得結果に追加して使います。",
+        height=150,
+    )
 
 if st.button("記事を生成する", type="primary", use_container_width=True):
     if not api_key:
@@ -735,42 +778,79 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
                 try:
                     page = fetch_page(safe_product_url)
                 except (requests.RequestException, ValueError) as page_exc:
-                    status.write("商品ページの直接取得が制限されたため、URL Contextへ切り替えます…")
+                    status.write("商品ページの直接取得が制限されたため、無料Readerへ切り替えます…")
                     try:
-                        research = call_url_research(
-                            client,
-                            model,
-                            safe_product_url,
-                            product_name.strip(),
-                            manufacturer.strip(),
-                            status.write,
-                        )
-                    except Exception as url_exc:
-                        if not product_name.strip():
-                            raise RuntimeError(
-                                "商品ページを直接取得できず、URL Contextも利用できませんでした。"
-                                f" {friendly_gemini_error(url_exc)} 商品名も入力して再実行してください。"
-                            ) from url_exc
-                        status.write("URL Contextが利用できないため、商品名検索へ切り替えます…")
+                        page = fetch_page_via_reader(safe_product_url)
+                    except (requests.RequestException, ValueError):
+                        status.write("無料Readerで取得できないため、URL Contextへ切り替えます…")
                         try:
-                            research = call_grounded_research(
+                            research = call_url_research(
                                 client,
                                 model,
+                                safe_product_url,
                                 product_name.strip(),
                                 manufacturer.strip(),
                                 status.write,
                             )
-                        except Exception as search_exc:
-                            raise RuntimeError(
-                                "商品ページの直接取得・URL Context・商品名検索のすべてに失敗しました。"
-                                f" {friendly_gemini_error(search_exc)}"
-                            ) from page_exc
-                    page = {"url": safe_product_url, "title": product_name.strip(), "text": research}
+                            page = {"url": safe_product_url, "title": product_name.strip(), "text": research}
+                        except Exception as url_exc:
+                            if product_name.strip():
+                                status.write("URL Contextが利用できないため、商品名検索へ切り替えます…")
+                                try:
+                                    research = call_grounded_research(
+                                        client,
+                                        model,
+                                        product_name.strip(),
+                                        manufacturer.strip(),
+                                        status.write,
+                                    )
+                                    page = {
+                                        "url": safe_product_url,
+                                        "title": product_name.strip(),
+                                        "text": research,
+                                    }
+                                except Exception as search_exc:
+                                    if product_notes.strip():
+                                        status.write("自動取得できないため、入力された商品情報を使用します…")
+                                        page = {
+                                            "url": safe_product_url,
+                                            "title": product_name.strip(),
+                                            "text": product_notes.strip(),
+                                        }
+                                    else:
+                                        raise RuntimeError(
+                                            "商品ページの直接取得・無料Reader・URL Context・商品名検索のすべてに失敗しました。"
+                                            f" {friendly_gemini_error(search_exc)} 「商品情報の補足」に公式ページの説明を貼り付けると生成できます。"
+                                        ) from page_exc
+                            elif product_notes.strip():
+                                status.write("自動取得できないため、入力された商品情報を使用します…")
+                                page = {
+                                    "url": safe_product_url,
+                                    "title": "",
+                                    "text": product_notes.strip(),
+                                }
+                            else:
+                                raise RuntimeError(
+                                    "商品ページを自動取得できませんでした。"
+                                    f" {friendly_gemini_error(url_exc)} 商品名または「商品情報の補足」を入力してください。"
+                                ) from url_exc
                 if product_name.strip():
                     page["text"] = f"入力商品名：{product_name.strip()}\nメーカー名：{manufacturer or '未入力'}\n\n" + page["text"]
+                if product_notes.strip() and product_notes.strip() not in page["text"]:
+                    page["text"] += f"\n\n入力された商品情報の補足：\n{product_notes.strip()}"
             else:
-                research = call_grounded_research(client, model, product_name.strip(), manufacturer.strip(), status.write)
-                page = {"url": "商品名からのWeb調査", "title": product_name.strip(), "text": research}
+                try:
+                    research = call_grounded_research(client, model, product_name.strip(), manufacturer.strip(), status.write)
+                    page = {"url": "商品名からのWeb調査", "title": product_name.strip(), "text": research}
+                except Exception:
+                    if not product_notes.strip():
+                        raise
+                    status.write("Web調査を利用できないため、入力された商品情報を使用します…")
+                    page = {
+                        "url": "商品情報の補足から生成",
+                        "title": product_name.strip(),
+                        "text": product_notes.strip(),
+                    }
             status.write("ステップ1：想定読者の深い悩みを分析しています…")
             intent = analyze_intent(client, model, page, promotion_context, status.write)
             status.write("ステップ2：SEO見出し構成を作成しています…")
@@ -877,7 +957,9 @@ with st.expander("無料で使うための注意点"):
     st.markdown("""
 - Google AI Studioの無料枠が提供されているモデル・地域・アカウントでは、その範囲で利用できます。
 - 無料枠、検索連携、回数・速度の条件はGoogle側で変更される場合があります。Google AI Studioの利用状況を確認してください。
-- 商品ページURLを入力すると、そのページを直接取得するため、商品名だけの検索連携を使わずに生成できます。
+- 商品ページURLは最初に直接取得し、拒否された場合だけ無料のJina Reader、Gemini URL Context、商品名検索の順に切り替えます。
+- Jina Readerへ送信するのは、入力した公開商品ページURLだけです。ログインURL、社内URL、個人情報を含むURLは入力しないでください。
+- 自動取得できない場合は「店舗・商品情報」の「商品情報の補足」に公式説明を貼り付けると生成できます。
 - このアプリは画像・動画そのものを生成しないため、追加の画像・動画API料金は発生しません。
 - 出力された制作プロンプトを、お使いの画像生成AI・動画生成AIへ貼り付けて使用してください。
 - 公開前に価格、在庫、特典、薬機法・景品表示法に関わる表現を必ず確認してください。
