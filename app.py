@@ -38,10 +38,19 @@ SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援す�
 日本語で出力してください。JSONを指定された場合は、有効なJSONだけを返してください。"""
 
 FALLBACK_MODELS = (
+    "gemini-3.8-flash",
+    "gemini-3.6-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-2.5-flash",
     "gemini-2.5-flash-lite",
+    "gemini-flash-latest",
 )
+MODEL_EXCLUDED_WORDS = (
+    "image", "tts", "live", "audio", "embedding", "embed",
+    "veo", "imagen", "transcribe", "banana",
+)
+_MODEL_CACHE: dict[int, list[str]] = {}
 MAX_PAGE_CHARS = 24_000
 PAGE_REQUEST_TIMEOUT = 25
 READER_REQUEST_TIMEOUT = 45
@@ -58,8 +67,73 @@ def secret_value(name: str) -> Optional[str]:
     return os.getenv(name)
 
 
-def unique_models(preferred_model: str) -> list[str]:
-    return list(dict.fromkeys((preferred_model, *FALLBACK_MODELS)))
+def normalize_model_name(name: str) -> str:
+    value = str(name or "").strip()
+    for prefix in ("models/", "publishers/google/models/"):
+        if value.startswith(prefix):
+            return value[len(prefix):]
+    return value
+
+
+def model_is_text_generator(name: str) -> bool:
+    lower = name.lower()
+    return lower.startswith("gemini-") and not any(word in lower for word in MODEL_EXCLUDED_WORDS)
+
+
+def discover_models(client: genai.Client, preferred_model: str) -> list[str]:
+    """APIキーで列挙できるgenerateContent対応モデルだけを優先順に返す。"""
+    cache_key = id(client)
+    if cache_key in _MODEL_CACHE:
+        return _MODEL_CACHE[cache_key]
+
+    preferred = normalize_model_name(preferred_model)
+    static_candidates = list(dict.fromkeys((preferred, *FALLBACK_MODELS)))
+    discovered: list[str] = []
+    try:
+        for info in client.models.list():
+            name = normalize_model_name(getattr(info, "name", ""))
+            actions = list(getattr(info, "supported_actions", None) or [])
+            if name and model_is_text_generator(name) and (
+                not actions or "generateContent" in actions
+            ):
+                discovered.append(name)
+    except Exception:
+        # 一覧取得が許可されないAPIキーでも、既知モデルで生成を試せるようにする。
+        discovered = []
+
+    if discovered:
+        discovered = list(dict.fromkeys(discovered))
+        preferred_order = [name for name in static_candidates if name in discovered]
+        remaining = sorted(
+            (name for name in discovered if name not in preferred_order),
+            key=lambda name: (
+                "flash" not in name,
+                "preview" in name or "experimental" in name,
+                name,
+            ),
+        )
+        result = preferred_order + remaining
+    else:
+        result = static_candidates
+    _MODEL_CACHE[cache_key] = result
+    return result
+
+
+def generation_config(
+    max_output_tokens: int,
+    response_mime_type: Optional[str] = None,
+    tools: Optional[list] = None,
+) -> types.GenerateContentConfig:
+    """Gemini 3系でも互換性の高い最小限の生成設定を作る。"""
+    kwargs = {
+        "system_instruction": SYSTEM_PROMPT,
+        "max_output_tokens": max_output_tokens,
+    }
+    if response_mime_type:
+        kwargs["response_mime_type"] = response_mime_type
+    if tools:
+        kwargs["tools"] = tools
+    return types.GenerateContentConfig(**kwargs)
 
 
 def call_llm(
@@ -72,20 +146,16 @@ def call_llm(
     temperature: float = 0.6,
 ) -> str:
     last_error: Optional[Exception] = None
-    for candidate in unique_models(model):
+    candidates = discover_models(client, model)
+    for candidate in candidates:
         if candidate != model and status_callback:
-            status_callback(f"無料枠で利用可能なモデル「{candidate}」へ切り替えています…")
+            status_callback(f"利用可能なモデル「{candidate}」へ自動で切り替えています…")
         for attempt in range(3):
             try:
                 response = client.models.generate_content(
                     model=candidate,
                     contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=SYSTEM_PROMPT,
-                        max_output_tokens=max_output_tokens,
-                        temperature=temperature,
-                        response_mime_type=response_mime_type,
-                    ),
+                    config=generation_config(max_output_tokens, response_mime_type),
                 )
                 text = (response.text or "").strip()
                 if not text:
@@ -96,13 +166,14 @@ def call_llm(
                 message = str(exc).lower()
                 retryable = any(code in message for code in ("429", "503", "resource_exhausted", "unavailable"))
                 missing = "404" in message or "not found" in message
+                incompatible = "400" in message or "invalid_argument" in message
                 if retryable and attempt < 2:
                     wait = 2 ** (attempt + 1)
                     if status_callback:
                         status_callback(f"無料枠が混雑しています。{wait}秒後に再試行します…")
                     time.sleep(wait)
                     continue
-                if retryable or missing:
+                if retryable or missing or incompatible:
                     break
                 raise
     if last_error:
@@ -121,7 +192,7 @@ def call_grounded_research(
     last_error: Optional[Exception] = None
     if status_callback:
         status_callback(f"「{product_name}」の公開情報を検索しています…")
-    for candidate in unique_models(model):
+    for candidate in discover_models(client, model):
         try:
             response = client.models.generate_content(
                 model=candidate,
@@ -139,10 +210,8 @@ def call_grounded_research(
 - 各事実の直後に参照したページ名とURLを記載する
 - 最後に参照URL一覧と、公開前に再確認すべき変動情報をまとめる
 """,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    max_output_tokens=6000,
-                    temperature=0.2,
+                config=generation_config(
+                    6000,
                     tools=[types.Tool(google_search=types.GoogleSearch())],
                 ),
             )
@@ -167,7 +236,7 @@ def call_url_research(
     last_error: Optional[Exception] = None
     if status_callback:
         status_callback("公式URLを別方式で読み込んでいます…")
-    for candidate in unique_models(model):
+    for candidate in discover_models(client, model):
         try:
             response = client.models.generate_content(
                 model=candidate,
@@ -184,10 +253,8 @@ def call_url_research(
 - 健康効果を断定せず、商品ページの表現を誇張しない
 - 冒頭に対象URLを、末尾に公開前の再確認事項を記載する
 """,
-                config=types.GenerateContentConfig(
-                    system_instruction=SYSTEM_PROMPT,
-                    max_output_tokens=6000,
-                    temperature=0.2,
+                config=generation_config(
+                    6000,
                     tools=[
                         types.Tool(url_context=types.UrlContext()),
                         types.Tool(google_search=types.GoogleSearch()),
@@ -220,7 +287,7 @@ def friendly_gemini_error(exc: Optional[Exception]) -> str:
     if any(token in message for token in ("403", "permission_denied")):
         return "APIキーまたはWeb検索機能の利用権限が確認できませんでした。"
     if "404" in message or "not found" in message:
-        return "選択したモデルを利用できませんでした。設定のモデル名を確認してください。"
+        return "APIキーで利用できる文章生成モデルを確認できませんでした。Google AI StudioでAPIキーの状態と利用可能なモデルを確認してください。"
     if "invalid_argument" in message or "400" in message:
         return "モデルまたはWeb検索機能がこのリクエストに対応していません。"
     return "一時的な通信エラーの可能性があります。少し時間をおいて再実行してください。"
@@ -715,8 +782,11 @@ st.caption("商品名または商品ページから調査し、SEO記事・LP・
 with st.sidebar:
     st.header("無料AI設定")
     api_key = st.text_input("Gemini APIキー", value=secret_value("GEMINI_API_KEY") or "", type="password")
-    model = st.text_input("モデル", value=secret_value("GEMINI_MODEL") or "gemini-3.5-flash-lite")
-    st.caption("Google AI Studioの無料枠を優先して利用します。APIキーはファイルに保存されません。")
+    model = st.text_input(
+        "優先モデル（通常は変更不要）",
+        value=secret_value("GEMINI_MODEL") or "gemini-3.8-flash",
+    )
+    st.caption("APIキーで利用可能な文章生成モデルを自動判定します。入力したモデルが使えない場合も自動で切り替えます。APIキーはファイルに保存されません。")
 
 sales_mode = st.radio(
     "販売目的", ["アフィリエイト", "院内・店舗販売", "両方"], horizontal=True,
