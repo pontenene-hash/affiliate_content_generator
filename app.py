@@ -37,7 +37,11 @@ SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援す�
 医療・健康・美容・金融・法律分野では効果を断定せず、適切な注意書きを入れてください。
 日本語で出力してください。JSONを指定された場合は、有効なJSONだけを返してください。"""
 
-FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
+FALLBACK_MODELS = (
+    "gemini-3.5-flash-lite",
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+)
 MAX_PAGE_CHARS = 24_000
 PAGE_REQUEST_TIMEOUT = 25
 JST = timezone(timedelta(hours=9))
@@ -146,9 +150,72 @@ def call_grounded_research(
                 return text
         except Exception as exc:
             last_error = exc
-    raise RuntimeError(
-        "商品名からのWeb調査を利用できませんでした。商品の公式ページURLを入力して再実行してください。"
-    ) from last_error
+    detail = friendly_gemini_error(last_error)
+    raise RuntimeError(f"商品名からのWeb調査を利用できませんでした。{detail}") from last_error
+
+
+def call_url_research(
+    client: genai.Client,
+    model: str,
+    page_url: str,
+    product_name: str = "",
+    manufacturer: str = "",
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> str:
+    """通常のHTTP取得を拒否する公開ページをGemini URL Contextで読む。"""
+    last_error: Optional[Exception] = None
+    for candidate in unique_models(model):
+        try:
+            if status_callback:
+                status_callback("公式URLを別方式で読み込んでいます…")
+            response = client.models.generate_content(
+                model=candidate,
+                contents=f"""次の公開ページだけを主な根拠として、商品調査資料を日本語で作成してください。
+
+対象URL：{page_url}
+入力商品名：{product_name or '未入力'}
+メーカー名：{manufacturer or '未入力'}
+
+調査ルール：
+- 対象URLから確認できた正式名称、商品の位置づけ、特徴、原材料・成分、内容量、価格、使い方、保存方法、注意事項、購入方法を整理する
+- 入力商品名に一致する商品の情報を優先し、同じページの別商品と混同しない
+- ページで確認できないことは「未確認」と明記し、推測で補わない
+- 健康効果を断定せず、商品ページの表現を誇張しない
+- 冒頭に対象URLを、末尾に公開前の再確認事項を記載する
+""",
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=6000,
+                    temperature=0.2,
+                    tools=[
+                        types.Tool(url_context=types.UrlContext()),
+                        types.Tool(google_search=types.GoogleSearch()),
+                    ],
+                ),
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except Exception as exc:
+            last_error = exc
+    detail = friendly_gemini_error(last_error)
+    raise RuntimeError(f"公式URLのAI読み込みも利用できませんでした。{detail}") from last_error
+
+
+def friendly_gemini_error(exc: Optional[Exception]) -> str:
+    """APIキーなどの秘密情報を出さず、利用者が直せる原因だけを返す。"""
+    message = str(exc or "").lower()
+    if any(token in message for token in ("429", "resource_exhausted", "quota")):
+        return "無料利用枠の上限または混雑の可能性があります。時間をおいて再実行してください。"
+    if any(token in message for token in ("401", "unauthenticated", "api_key_invalid")):
+        return "APIキーが認証されませんでした。Google AI Studioでキーを確認してください。"
+    if any(token in message for token in ("403", "permission_denied")):
+        return "APIキーまたはWeb検索機能の利用権限が確認できませんでした。"
+    if "404" in message or "not found" in message:
+        return "選択したモデルを利用できませんでした。設定のモデル名を確認してください。"
+    if "invalid_argument" in message or "400" in message:
+        return "モデルまたはWeb検索機能がこのリクエストに対応していません。"
+    return "一時的な通信エラーの可能性があります。少し時間をおいて再実行してください。"
 
 
 def validate_public_url(raw_url: str) -> str:
@@ -456,7 +523,9 @@ def display_error(exc: Exception) -> None:
     text = str(exc)
     if "429" in text or "RESOURCE_EXHAUSTED" in text:
         st.error("Gemini無料枠の上限または混雑です。時間をおいて、もう一度お試しください。")
-    elif "403" in text:
+    elif isinstance(exc, requests.HTTPError):
+        st.error("商品ページ側が自動読み込みを拒否しました。URL Contextによる読み込みも失敗した場合は、時間をおいて再実行してください。")
+    elif "403" in text or "PERMISSION_DENIED" in text:
         st.error("APIキーの権限を確認してください。Google AI Studioで新しい認証キーを作ると改善する場合があります。")
     else:
         st.error(f"処理を完了できませんでした：{text}")
@@ -663,7 +732,40 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
         with st.status("商品ページを読み込み、記事とSNS投稿を作成しています…", expanded=True) as status:
             if safe_product_url:
                 status.write("商品ページを読み込んでいます…")
-                page = fetch_page(safe_product_url)
+                try:
+                    page = fetch_page(safe_product_url)
+                except (requests.RequestException, ValueError) as page_exc:
+                    status.write("商品ページの直接取得が制限されたため、URL Contextへ切り替えます…")
+                    try:
+                        research = call_url_research(
+                            client,
+                            model,
+                            safe_product_url,
+                            product_name.strip(),
+                            manufacturer.strip(),
+                            status.write,
+                        )
+                    except Exception as url_exc:
+                        if not product_name.strip():
+                            raise RuntimeError(
+                                "商品ページを直接取得できず、URL Contextも利用できませんでした。"
+                                f" {friendly_gemini_error(url_exc)} 商品名も入力して再実行してください。"
+                            ) from url_exc
+                        status.write("URL Contextが利用できないため、商品名検索へ切り替えます…")
+                        try:
+                            research = call_grounded_research(
+                                client,
+                                model,
+                                product_name.strip(),
+                                manufacturer.strip(),
+                                status.write,
+                            )
+                        except Exception as search_exc:
+                            raise RuntimeError(
+                                "商品ページの直接取得・URL Context・商品名検索のすべてに失敗しました。"
+                                f" {friendly_gemini_error(search_exc)}"
+                            ) from page_exc
+                    page = {"url": safe_product_url, "title": product_name.strip(), "text": research}
                 if product_name.strip():
                     page["text"] = f"入力商品名：{product_name.strip()}\nメーカー名：{manufacturer or '未入力'}\n\n" + page["text"]
             else:
