@@ -305,7 +305,7 @@ def write_article(
 {outline}
 ---
 
-購入・詳細確認URL：{destination_url}
+購入・詳細確認URL：{destination_url or '未設定'}
 販売・案内条件：{promotion_context}
 
 執筆条件：
@@ -316,12 +316,13 @@ def write_article(
 - 事実は商品ページ資料の範囲だけを使う
 - 使っていない商品を使ったように書かない。架空の体験談・口コミは禁止
 - デメリット、注意点、向かない人も誠実に説明
-- 購入・詳細確認URLをMarkdownリンクで、導入後・比較検討後・まとめ付近の最大3か所に自然に設置
-- リンク文言は「公式サイトで詳しく確認する」など内容が分かる表現にする
+- 購入・詳細確認URLが設定されている場合だけ、Markdownリンクで導入後・比較検討後・まとめ付近の最大3か所に自然に設置
+- URLが未設定の場合はリンクを創作せず、「院内でスタッフへお声がけください」「ご来店時にご相談ください」など店舗購入の案内に置き換える
+- リンクを設置する場合の文言は「公式サイトで詳しく確認する」など内容が分かる表現にする
 - 過度な煽り、限定性の捏造、効果保証は禁止
 - 最後の「まとめ」では、商品が向く人・向かない人を短く再確認する
 - 商品が向く読者に対して、記事で確認できた特徴と選ぶ理由を1〜2文で誠実に示し、押し売りにならない言葉で購入検討を勧める
-- まとめの最後に「自分の悩みや希望に合いそうな方は、公式サイトで詳しい内容を確認してみてください」などの自然な案内とアフィリエイトリンクを必ず置く
+- まとめの最後は、URLがある場合は詳細確認リンクへ、URLがない店舗販売の場合は院内スタッフへの相談・購入へ自然に案内する
 - 「今すぐ買わないと損」「絶対に効果がある」などの強引な表現は使わない
 - FAQを3〜5問含める
 - # は記事タイトル、## はH2、### はH3にする
@@ -359,13 +360,14 @@ def create_sales_assets(
 ---
 {article}
 ---
-購入・詳細確認URL：{destination_url}
+購入・詳細確認URL：{destination_url or '未設定'}
 販売・案内条件：{promotion_context}
 
 条件：
 - 未確認の価格、効果、実績、口コミ、限定性を創作しない
 - 医療・健康・美容分野では効能を断定しない
 - 販売目的に合う広告・PR表記と、押し売りにならないCTAを使う
+- URLが未設定の場合はURLを創作せず、院内スタッフへの相談・購入案内にする
 - landing_pageは「悩みへの共感→選ばれる理由→特徴→向く人・向かない人→注意点→FAQ→CTA」の順でMarkdown執筆
 - gbp_postは店舗販売を含む場合にGoogleビジネスプロフィール向け、含まない場合は空文字
 - store_popは店舗販売を含む場合にA4店内POP用の短い原稿、含まない場合は空文字
@@ -614,9 +616,21 @@ sales_mode = st.radio(
     "販売目的", ["アフィリエイト", "院内・店舗販売", "両方"], horizontal=True,
     help="広告表記、CTA、GBP・店内POPの生成内容を目的に合わせます。",
 )
+if sales_mode == "アフィリエイト":
+    st.info("商品をオンラインで紹介し、ASPなどの専用リンク経由の購入につなげる使い方です。")
+elif sales_mode == "院内・店舗販売":
+    st.info("院内や店舗で直接販売する使い方です。購入ページがなければURLは空欄のままで構いません。記事やSNSは『院内でスタッフへお声がけください』などの案内になります。")
+else:
+    st.info("『両方』は、院内・店舗でも販売し、来店できない方にはアフィリエイトリンクからオンライン購入を案内する使い方です。購入・詳細確認用URLにはアフィリエイトURLを入力してください。")
 product_name = st.text_input("商品名", placeholder="商品名だけでも調査を開始できます")
 product_url = st.text_input("商品ページURL（任意）", placeholder="https://example.com/product")
-destination_url = st.text_input("購入・詳細確認用URL", placeholder="アフィリURL、公式商品ページ、予約・問い合わせページなど")
+if sales_mode == "院内・店舗販売":
+    destination_label = "購入・詳細確認用URL（任意）"
+    destination_placeholder = "空欄でも生成できます。店舗ページや問い合わせページがあれば入力"
+else:
+    destination_label = "アフィリエイトURL（必須）"
+    destination_placeholder = "ASPなどで発行された専用のアフィリエイトURL"
+destination_url = st.text_input(destination_label, placeholder=destination_placeholder)
 with st.expander("店舗・商品情報（任意）"):
     manufacturer = st.text_input("メーカー名")
     store_name = st.text_input("店舗・院・サービスの正式名称")
@@ -628,19 +642,20 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
     if not product_name.strip() and not product_url.strip():
         st.error("商品名または商品ページURLのどちらかを入力してください。")
         st.stop()
-    if not destination_url.strip():
-        st.error("購入・詳細確認用URLを入力してください。")
+    if sales_mode in {"アフィリエイト", "両方"} and not destination_url.strip():
+        st.error("アフィリエイトURLを入力してください。")
         st.stop()
     try:
         safe_product_url = validate_public_url(product_url) if product_url.strip() else ""
-        safe_destination_url = validate_public_url(destination_url)
+        safe_destination_url = validate_public_url(destination_url) if destination_url.strip() else ""
     except Exception as exc:
         st.error(str(exc)); st.stop()
 
     promotion_context = (
         f"販売目的：{sales_mode}。店舗・院・サービス正式名称：{store_name or '未入力'}。"
-        f"メーカー名：{manufacturer or '未入力'}。案内先URL：{safe_destination_url}。"
+        f"メーカー名：{manufacturer or '未入力'}。案内先URL：{safe_destination_url or '未設定'}。"
         "アフィリエイトを含む場合は【PR】と広告開示を明示する。店舗販売を含む場合は、提供された正式名称だけを使い、来店・相談・購入へ穏やかに案内する。"
+        "案内先URLが未設定の場合はURLを創作せず、『院内でスタッフへお声がけください』『ご来店時にご相談ください』など、店舗内で完結する案内にする。"
     )
 
     client = genai.Client(api_key=api_key)

@@ -235,7 +235,10 @@ def _article_title(article: str) -> str:
     return "悩みを解決するヒント"
 
 
-def _ensure_video_scenes(item: dict, media_key: str, article: str) -> dict:
+def _ensure_video_scenes(
+    item: dict, media_key: str, article: str,
+    promotion_context: str = "アフィリエイト販売",
+) -> dict:
     scenes = [_as_dict(scene, "narration") for scene in _as_list(item.get("scenes"))]
     catch_copy = _plain_text(item.get("title") or item.get("caption") or _article_title(article), 22)
     if not scenes or scenes[0].get("scene_type") != "opening_cover":
@@ -249,14 +252,21 @@ def _ensure_video_scenes(item: dict, media_key: str, article: str) -> dict:
     else:
         scenes[0]["duration"] = "3.5〜4秒"
 
-    if media_key == "youtube":
+    store_only_without_url = (
+        "販売目的：院内・店舗販売" in promotion_context
+        and "案内先URL：未設定" in promotion_context
+    )
+    if store_only_without_url:
+        cta_caption = "院内でご相談ください"
+        cta_narration = "気になる方は、ご来店時に院内スタッフへお気軽にお声がけください。"
+    elif media_key == "youtube":
         cta_caption = "公式サイトで詳しく確認"
         cta_narration = "自分に合いそうだと感じた方は、概要欄のリンクから公式サイトを確認してみてください。"
     else:
         cta_caption = "詳しくはプロフィールへ"
         cta_narration = "自分に合いそうだと感じた方は、プロフィールのリンクから詳しく確認してみてください。"
     last_text = " ".join(str(value) for value in scenes[-1].values()) if scenes else ""
-    if not any(word in last_text for word in ("プロフィール", "概要欄", "公式サイト", "詳しく確認")):
+    if not any(word in last_text for word in ("プロフィール", "概要欄", "公式サイト", "詳しく確認", "院内", "相談")):
         scenes.append({
             "scene_type": "affiliate_cta",
             "duration": "3〜4秒",
@@ -373,11 +383,13 @@ def _video_prompt_item(
     vertical: bool,
 ) -> dict:
     scene_lines = []
+    scene_texts = []
     for index, raw_scene in enumerate(_as_list(plan_item.get("scenes")), 1):
         scene = _as_dict(raw_scene, "narration")
         heading = _plain_text(scene.get("caption", ""), 10000)
         telop_text = _plain_text(scene.get("narration", ""), 10000)
         visual = _plain_text(scene.get("visual") or scene.get("direction", ""), 120)
+        scene_texts.append(f"{heading} {telop_text} {visual}")
         scene_lines.append(
             f"シーン{index}（4〜6秒を目安）：上部見出し『{heading}』。"
             f"音声にせずタイピング風に表示するテロップ本文『{telop_text}』。"
@@ -386,14 +398,25 @@ def _video_prompt_item(
             "見出し、テロップ、イラストを同じ要点に一致させ、内容と無関係な汎用場面にしない。"
         )
     scene_script = " ".join(scene_lines)
+    store_only_cta = any(
+        word in " ".join(scene_texts) for word in ("院内スタッフ", "ご来店時", "院内でご相談")
+    )
     if vertical:
         layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
         font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、プロフィールの購入・詳細確認先へ案内する"
+        cta = (
+            "最後の3〜4秒は【商品案内】を示し、商品が向く人へ自然に勧め、ご来店時に院内スタッフへ声をかけるよう案内する。URLやプロフィールリンクは表示しない"
+            if store_only_cta else
+            "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、プロフィールの購入・詳細確認先へ案内する"
+        )
     else:
         layout = "人物・映像と文字を左右に完全分離し、下部に独立した字幕帯を設け、重要要素を画面端から十分に離す"
         font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、概要欄の購入・詳細確認先へ案内する"
+        cta = (
+            "最後の3〜4秒は【商品案内】を示し、商品が向く人へ自然に勧め、ご来店時に院内スタッフへ声をかけるよう案内する。URLや概要欄リンクは表示しない"
+            if store_only_cta else
+            "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、概要欄の購入・詳細確認先へ案内する"
+        )
     prompt = (
         "各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。"
         "あなたは読者心理、購買行動、視聴維持を熟知したプロのマーケティングコンサルタントであり、"
@@ -514,7 +537,7 @@ def _normalize_social_plan(data: dict, article: str, promotion_context: str = "�
     for key in ("reel", "youtube", "tiktok"):
         item = _as_dict(data.get(key), "caption")
         item["scenes"] = [_as_dict(scene, "narration") for scene in _as_list(item.get("scenes"))]
-        data[key] = _ensure_video_scenes(item, key, article)
+        data[key] = _ensure_video_scenes(item, key, article, promotion_context)
 
     carousel = _as_dict(data.get("carousel"), "caption")
     data["carousel"] = carousel
@@ -535,10 +558,17 @@ def _normalize_social_plan(data: dict, article: str, promotion_context: str = "�
     last_slide = carousel["slides"][8]
     last_text = f"{last_slide.get('title', '')} {last_slide.get('body', '')}"
     affiliate_mode = "アフィリエイト" in promotion_context or "両方" in promotion_context
+    store_only_without_url = (
+        "販売目的：院内・店舗販売" in promotion_context
+        and "案内先URL：未設定" in promotion_context
+    )
     disclosure = "【PR】" if affiliate_mode else "【商品案内】"
     if not any(word in last_text for word in ("プロフィール", "公式サイト", "購入", "相談", "店舗")):
         last_slide["title"] = "自分に合うか確認しよう"
-        last_slide["body"] = f"商品が自分の悩みや希望に合いそうな方は、プロフィールの案内先から詳しく確認してみてください。{disclosure}"
+        if store_only_without_url:
+            last_slide["body"] = f"気になる方は、ご来店時に院内スタッフへお気軽にお声がけください。{disclosure}"
+        else:
+            last_slide["body"] = f"商品が自分の悩みや希望に合いそうな方は、プロフィールの案内先から詳しく確認してみてください。{disclosure}"
 
     data["creative_prompts"] = _build_creative_prompts(data, article)
     return data
@@ -553,8 +583,8 @@ def _generate_social_plan_legacy(client, model: str, article: str, call_llm, aff
 {article}
 ---
 
-購入・詳細確認用アフィリエイトURL：
-{affiliate_url}
+購入・詳細確認用URL：
+{affiliate_url or '未設定'}
 
 共通条件：
 - 記事にない価格、数値、実績、口コミ、効果、人物、研究結果を追加しない
@@ -733,8 +763,8 @@ def generate_social_plan(
 {article}
 ---
 
-購入・詳細確認用アフィリエイトURL：
-{affiliate_url}
+購入・詳細確認用URL：
+{affiliate_url or '未設定'}
 
 販売・案内条件：
 {promotion_context}
@@ -744,11 +774,12 @@ def generate_social_plan(
 - 医療・健康・美容情報を断定せず、過度な煽り、効果保証、架空の限定性を使わない
 - 販売目的にアフィリエイトを含む場合は、すべての投稿の冒頭または目立つ位置に「【PR】」を入れる
 - 院内・店舗販売だけの場合は「【商品案内】」など実態に合う表示にし、アフィリエイト広告であると偽らない
-- X、Facebook、Threads、LINE、YouTube概要欄には購入・詳細確認URLを省略せず1回入れる
-- Instagram、リール、TikTokは「プロフィールのリンクから確認」と自然に案内する
+- URLが設定されている場合は、X、Facebook、Threads、LINE、YouTube概要欄に購入・詳細確認URLを省略せず1回入れる
+- URLが設定されている場合は、Instagram、リール、TikTokで「プロフィールのリンクから確認」と自然に案内する
+- URLが未設定の院内・店舗販売ではURLやプロフィールリンクを創作せず、「院内でスタッフへお声がけください」「ご来店時にご相談ください」と案内する
 - 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
 - ハッシュタグは文字列配列にする
-- カルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人への自然な案内とプロフィールリンクへの行動喚起
+- カルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人への自然な案内と、設定された購入方法に合う行動喚起
 - カルーセル9枚だけで完成記事の要点を順序よく理解できる構成にする。2枚目で読者の悩み・現状、3〜8枚目で原因・知識・方法・注意点・メリットなど記事の主要点を重複なく割り当てる
 - カルーセル各枚のtitle、body、visualは必ず同じ記事要点を表す。全9枚で同じ主人公・画風・色設計を保ち、表情、動作、背景、小物、構図は各要点に合わせて変える
 - リール、TikTok、YouTubeはいずれも40〜45秒程度、5〜7シーンとする
