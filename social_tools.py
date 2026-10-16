@@ -10,6 +10,8 @@ ARTICLE_IMAGE_LAYOUT = "左側30％をテキスト専用エリア、右側70％�
 ARTICLE_IMAGE_FONT = "太めの日本語ゴシック体。見出し56〜72px、補足30〜38px以上、行間1.25〜1.4倍、1行15〜18文字以内"
 
 MEDIA_FILENAMES = {
+    "product_promo_image": "商品紹介画像.png",
+    "store_pop_image": "店内POP_A4.png",
     "x_image": "X_投稿画像.png",
     "facebook_eyecatch": "Facebook_アイキャッチ.png",
     "threads_image": "Threads_投稿画像.png",
@@ -68,7 +70,7 @@ PROFESSIONAL_REVIEW = (
 MARKETING_REVIEW = (
     "さらに納品前に、プロのマーケティングコンサルタントとして最終確認する。"
     "想定読者の悩みとの一致、最初の3秒の訴求力、内容理解のしやすさ、媒体特性、視聴維持、商品の魅力、"
-    "押し売り感のない購入導線、【PR】表記、アフィリエイト案内、事実にない誇張や効果保証がないことを確認する。"
+    "押し売り感のない購入導線、販売形態に合う広告・商品案内表示、事実にない誇張や効果保証がないことを確認する。"
     "見出し・イラスト・説明・CTAの優先順位が明確で、読者が次に何をすべきか自然に理解できる状態にする。"
     "1項目でも不合格ならコピー、構図、順序、CTAを修正して再確認し、マーケティング上も合格した完成版だけを出力する。"
 )
@@ -131,7 +133,7 @@ def _validate_social_plan(data: dict) -> None:
         raise ValueError("Instagramカルーセル構成が9枚ではありません。")
     prompts = data.get("creative_prompts", {})
     prompt_keys = (
-        "x_image", "facebook_eyecatch", "threads_image", "line_image",
+        "product_promo_image", "store_pop_image", "x_image", "facebook_eyecatch", "threads_image", "line_image",
         "instagram_carousel", "reel_cover", "reel_video", "youtube_thumbnail",
         "youtube_video", "tiktok_cover", "tiktok_video",
     )
@@ -176,10 +178,10 @@ def _add_video_audio_instructions(item: dict, media_key: str) -> dict:
     prompt = str(item.get("prompt", "")).rstrip()
     if media_key == "youtube_video":
         font_rule = "冒頭表紙のキャッチコピー88〜112px、通常テロップ64〜80px以上"
-        cta_route = "最後は『自分に合いそうな方は、概要欄のリンクから公式サイトを確認してみてください【PR】』と自然に案内する"
+        cta_route = "最後は『自分に合いそうな方は、概要欄のリンクから詳しく確認してみてください』と自然に案内し、販売形態に合う広告・商品案内表示を添える"
     else:
         font_rule = "冒頭表紙のキャッチコピー96〜120px、通常テロップ72〜88px以上"
-        cta_route = "最後は『自分に合いそうな方は、プロフィールのリンクから詳しく確認してみてください【PR】』と自然に案内する"
+        cta_route = "最後は『自分に合いそうな方は、プロフィールのリンクから詳しく確認してみてください』と自然に案内し、販売形態に合う広告・商品案内表示を添える"
     instructions = (
         "画面内にはInstagram、YouTube、TikTok、X、FacebookなどのSNS名、SNSロゴ、アプリアイコン、"
         "ユーザー名、保存ファイル名、拡張子、透かしを表示しない。SNS名は制作データの管理用名称にだけ使用する。"
@@ -258,7 +260,7 @@ def _ensure_video_scenes(item: dict, media_key: str, article: str) -> dict:
         scenes.append({
             "scene_type": "affiliate_cta",
             "duration": "3〜4秒",
-            "caption": f"{cta_caption}【PR】",
+            "caption": cta_caption,
             "narration": cta_narration,
             "direction": "最後の商品案内。向いている人へ自然に勧め、押し売り表現は使わない。",
         })
@@ -387,11 +389,11 @@ def _video_prompt_item(
     if vertical:
         layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
         font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の3〜4秒は【PR】を示し、商品が向く人へ自然に勧め、プロフィールのアフィリエイトリンクへ案内する"
+        cta = "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、プロフィールの購入・詳細確認先へ案内する"
     else:
         layout = "人物・映像と文字を左右に完全分離し、下部に独立した字幕帯を設け、重要要素を画面端から十分に離す"
         font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = "最後の3〜4秒は【PR】を示し、商品が向く人へ自然に勧め、概要欄のアフィリエイトリンクへ案内する"
+        cta = "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、概要欄の購入・詳細確認先へ案内する"
     prompt = (
         "各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。"
         "あなたは読者心理、購買行動、視聴維持を熟知したプロのマーケティングコンサルタントであり、"
@@ -445,7 +447,25 @@ def _build_creative_prompts(plan: dict, article: str) -> dict:
     horizontal = "左側35％をテキスト専用、右側65％をイラスト専用とする左右分割。背景色と余白で境界を明確にする"
     square = "上部25％を見出し、中央55％をイラスト、下部20％を補足専用カードとして3領域を完全分離する"
     vertical = "上部20％を見出し、中央60％をイラスト、下部5％を補足、残り15％を操作UI用安全余白として固定する"
+    sections = _article_sections(article) or [{
+        "level": "H2", "heading": "商品のポイント",
+        "summary": _plain_text(article, 140) or "商品の要点を視覚的に分かりやすく表現する",
+    }]
+    product_title = _article_title(article)
+    product_body = sections[0].get("summary", "商品の特徴を分かりやすく確認する")
     prompts = {
+        "product_promo_image": _image_prompt_item(
+            product_title, product_body, "1200×1200", square,
+            "太めゴシック。見出し72〜92px、補足は見出しの約80％、最大4行",
+            MEDIA_FILENAMES["product_promo_image"],
+            f"商品紹介の主画像。『{product_title}』の特徴と、どのような読者向けかが一目で伝わる具体的な生活場面",
+        ),
+        "store_pop_image": _image_prompt_item(
+            product_title, "こんなお悩みがある方は、無理なく確認してみませんか？", "A4縦・1240×1754", vertical,
+            "太めゴシック。見出し80〜104px、補足は見出しの約80％、CTAは60px以上",
+            MEDIA_FILENAMES["store_pop_image"],
+            f"店頭で3秒見ただけでも『{product_title}』の対象者、要点、次の行動が分かる販促POP",
+        ),
         "x_image": _image_prompt_item(x_data.get("title", ""), x_data.get("body", ""), "1200×675", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["x_image"], x_data.get("visual", "")),
         "facebook_eyecatch": _image_prompt_item(facebook.get("image_title", ""), facebook.get("image_body", ""), "1200×630", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["facebook_eyecatch"], facebook.get("visual", "")),
         "threads_image": _image_prompt_item(threads.get("image_title", ""), threads.get("image_body", ""), "1080×1080", square, "太めゴシック。見出し64〜80px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["threads_image"], threads.get("visual", "")),
@@ -469,10 +489,6 @@ def _build_creative_prompts(plan: dict, article: str) -> dict:
         )
         item.update({"slide": index, "body_text": item.get("sub_copy", "")})
         prompts["instagram_carousel"].append(item)
-    sections = _article_sections(article) or [{
-        "level": "H2", "heading": "記事のポイント",
-        "summary": _plain_text(article, 140) or "記事の要点を視覚的に分かりやすく表現する",
-    }]
     prompts["article_section_images"] = []
     for index, section in enumerate(sections, 1):
         item = _image_prompt_item(
@@ -486,7 +502,7 @@ def _build_creative_prompts(plan: dict, article: str) -> dict:
     return apply_quality_rules(prompts)
 
 
-def _normalize_social_plan(data: dict, article: str) -> dict:
+def _normalize_social_plan(data: dict, article: str, promotion_context: str = "アフィリエイト販売") -> dict:
     """無料モデルの配列不足を補い、必ず表示可能な形へ整える。"""
     if not isinstance(data, dict):
         raise ValueError("SNS構成が正しい形式ではありません。")
@@ -518,9 +534,11 @@ def _normalize_social_plan(data: dict, article: str) -> dict:
     carousel["slides"] = slides[:9]
     last_slide = carousel["slides"][8]
     last_text = f"{last_slide.get('title', '')} {last_slide.get('body', '')}"
-    if not any(word in last_text for word in ("プロフィール", "公式サイト", "アフィリエイトリンク", "購入")):
+    affiliate_mode = "アフィリエイト" in promotion_context or "両方" in promotion_context
+    disclosure = "【PR】" if affiliate_mode else "【商品案内】"
+    if not any(word in last_text for word in ("プロフィール", "公式サイト", "購入", "相談", "店舗")):
         last_slide["title"] = "自分に合うか確認しよう"
-        last_slide["body"] = "商品が自分の悩みや希望に合いそうな方は、プロフィールのリンクから公式サイトを確認してみてください。【PR】"
+        last_slide["body"] = f"商品が自分の悩みや希望に合いそうな方は、プロフィールの案内先から詳しく確認してみてください。{disclosure}"
 
     data["creative_prompts"] = _build_creative_prompts(data, article)
     return data
@@ -698,7 +716,10 @@ def _generate_social_plan_legacy(client, model: str, article: str, call_llm, aff
     raise ValueError(f"SNS投稿文と制作プロンプトを完成できませんでした：{last_error}")
 
 
-def generate_social_plan(client, model: str, article: str, call_llm, affiliate_url: str = "") -> dict:
+def generate_social_plan(
+    client, model: str, article: str, call_llm, affiliate_url: str = "",
+    promotion_context: str = "アフィリエイト販売",
+) -> dict:
     prompt = f"""【完成記事からSNS投稿文・動画台本を作成】
 あなたは、読者心理・購買行動・媒体特性を熟知したプロのマーケティングコンサルタントであり、
 広告・出版分野で経験豊富なプロのイラストレーター兼映像ディレクターです。
@@ -715,11 +736,15 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
 購入・詳細確認用アフィリエイトURL：
 {affiliate_url}
 
+販売・案内条件：
+{promotion_context}
+
 厳格な条件：
 - 記事にない数値、実績、料金、資格、口コミ、効果、人物、店舗情報、研究結果を追加しない
 - 医療・健康・美容情報を断定せず、過度な煽り、効果保証、架空の限定性を使わない
-- すべての投稿の冒頭または目立つ位置に「【PR】」を入れる
-- X、Facebook、Threads、LINE、YouTube概要欄にはアフィリエイトURLを省略せず1回入れる
+- 販売目的にアフィリエイトを含む場合は、すべての投稿の冒頭または目立つ位置に「【PR】」を入れる
+- 院内・店舗販売だけの場合は「【商品案内】」など実態に合う表示にし、アフィリエイト広告であると偽らない
+- X、Facebook、Threads、LINE、YouTube概要欄には購入・詳細確認URLを省略せず1回入れる
 - Instagram、リール、TikTokは「プロフィールのリンクから確認」と自然に案内する
 - 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
 - ハッシュタグは文字列配列にする
@@ -754,7 +779,7 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
   "x_image": {{"title": "短い見出し", "body": "60文字以内の説明", "visual": "具体的な場面"}},
   "threads": {{"text": "投稿文", "hashtags": ["#タグ"], "image_title": "短い見出し", "image_body": "60文字以内", "visual": "具体的な場面"}},
   "facebook": {{"text": "詳しい投稿文", "hashtags": ["#タグ"], "image_title": "短い見出し", "image_body": "60文字以内", "visual": "具体的な場面"}},
-  "line": {{"text": "LINE配信用文", "image_title": "短い見出し", "image_body": "80文字以内", "visual": "具体的な場面"}},
+  "line": {{"text": "販売目的に合うLINE配信用文", "image_title": "短い見出し", "image_body": "80文字以内", "visual": "具体的な場面"}},
   "carousel": {{"caption": "Instagramキャプション", "hashtags": ["#タグ"], "slides": [{{"title": "短い見出し", "body": "80文字以内", "visual": "具体的な場面"}}]}},
   "reel": {{"caption": "リール投稿文", "hashtags": ["#タグ"], "cover_title": "表紙見出し", "cover_body": "短い補足", "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "上部見出し", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "visual": "具体的な場面"}}]}},
   "youtube": {{"title": "タイトル", "description": "URLを含む概要欄", "hashtags": ["#タグ"], "thumbnail_title": "サムネイル見出し", "thumbnail_body": "短い補足", "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "上部見出し", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "visual": "具体的な場面"}}]}},
@@ -768,7 +793,7 @@ def generate_social_plan(client, model: str, article: str, call_llm, affiliate_u
             response_mime_type="application/json", temperature=0.35,
         )
         try:
-            data = _normalize_social_plan(_load_json_response(raw), article)
+            data = _normalize_social_plan(_load_json_response(raw), article, promotion_context)
             _validate_social_plan(data)
             return data
         except (json.JSONDecodeError, ValueError) as exc:
@@ -798,6 +823,8 @@ def creative_prompt_text(plan: dict) -> str:
     plan = _as_dict(plan)
     prompts = _as_dict(plan.get("creative_prompts"))
     labels = (
+        ("product_promo_image", "商品紹介画像"),
+        ("store_pop_image", "店内POP画像"),
         ("x_image", "X投稿画像"),
         ("facebook_eyecatch", "Facebookアイキャッチ"),
         ("threads_image", "Threads投稿画像"),

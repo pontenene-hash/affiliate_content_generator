@@ -1,8 +1,12 @@
 import ipaddress
+import io
+import json
 import os
 import re
 import socket
 import time
+import zipfile
+from datetime import datetime, timedelta, timezone
 from html import escape
 from typing import Callable, Optional
 from urllib.parse import urlparse
@@ -36,6 +40,7 @@ SYSTEM_PROMPT = """あなたは月間100万PV規模のメディアを支援す�
 FALLBACK_MODELS = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 MAX_PAGE_CHARS = 24_000
 PAGE_REQUEST_TIMEOUT = 25
+JST = timezone(timedelta(hours=9))
 
 
 def secret_value(name: str) -> Optional[str]:
@@ -100,6 +105,52 @@ def call_llm(
     raise RuntimeError("利用可能なGeminiモデルが見つかりませんでした。")
 
 
+def call_grounded_research(
+    client: genai.Client,
+    model: str,
+    product_name: str,
+    manufacturer: str = "",
+    status_callback: Optional[Callable[[str], None]] = None,
+) -> str:
+    """商品名だけの入力時に、Geminiの検索連携で公開情報を調査する。"""
+    last_error: Optional[Exception] = None
+    for candidate in unique_models(model):
+        try:
+            if status_callback:
+                status_callback(f"「{product_name}」の公開情報を検索しています…")
+            response = client.models.generate_content(
+                model=candidate,
+                contents=f"""次の商品をWebで調査し、日本語の調査資料を作成してください。
+
+商品名：{product_name}
+メーカー名：{manufacturer or '未入力'}
+
+調査ルール：
+- メーカー・ブランドの公式サイトを最優先し、次に公的機関、正規販売店を使う
+- 同名商品が複数ある場合はメーカー名と照合し、特定できなければ断定しない
+- 正式名称、区分、特徴、原材料・成分、仕様、使い方、価格、注意事項、購入方法を確認する
+- 確認できない項目は「未確認」と明記し、推測で補わない
+- 口コミを事実として創作しない
+- 各事実の直後に参照したページ名とURLを記載する
+- 最後に参照URL一覧と、公開前に再確認すべき変動情報をまとめる
+""",
+                config=types.GenerateContentConfig(
+                    system_instruction=SYSTEM_PROMPT,
+                    max_output_tokens=6000,
+                    temperature=0.2,
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                ),
+            )
+            text = (response.text or "").strip()
+            if text:
+                return text
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(
+        "商品名からのWeb調査を利用できませんでした。商品の公式ページURLを入力して再実行してください。"
+    ) from last_error
+
+
 def validate_public_url(raw_url: str) -> str:
     url = raw_url.strip()
     parsed = urlparse(url)
@@ -160,7 +211,7 @@ def fetch_page(url: str) -> dict[str, str]:
     return {"url": final_url, "title": title, "text": combined[:MAX_PAGE_CHARS]}
 
 
-def analyze_intent(client, model: str, page: dict, callback=None) -> str:
+def analyze_intent(client, model: str, page: dict, promotion_context: str, callback=None) -> str:
     return call_llm(
         client,
         model,
@@ -172,6 +223,7 @@ def analyze_intent(client, model: str, page: dict, callback=None) -> str:
 ---
 {page['text']}
 ---
+販売・案内条件：{promotion_context}
 
 次を明確にしてください。
 - 想定読者像
@@ -189,7 +241,7 @@ def analyze_intent(client, model: str, page: dict, callback=None) -> str:
     )
 
 
-def create_outline(client, model: str, page: dict, intent: str, callback=None) -> str:
+def create_outline(client, model: str, page: dict, intent: str, promotion_context: str, callback=None) -> str:
     return call_llm(
         client,
         model,
@@ -204,9 +256,11 @@ def create_outline(client, model: str, page: dict, intent: str, callback=None) -
 ---
 {page['text']}
 ---
+販売・案内条件：{promotion_context}
 
 検索意図を満たし、比較検討から納得できる選択へ導く構成を作成してください。
 - SEOタイトルを1つ
+- 主軸キーワード、関連キーワード、悩みキーワードを検索意図別に明示
 - 導入文
 - H2を6〜8個、必要な箇所にH3を2〜4個
 - 悩み、原因・選び方、商品特徴、メリット、注意点、向く人・向かない人、使い方または申込手順、FAQ、まとめを自然な順序で扱う
@@ -226,7 +280,8 @@ def write_article(
     client,
     model: str,
     page: dict,
-    affiliate_url: str,
+    destination_url: str,
+    promotion_context: str,
     intent: str,
     outline: str,
     callback=None,
@@ -250,16 +305,18 @@ def write_article(
 {outline}
 ---
 
-アフィリエイトリンク：{affiliate_url}
+購入・詳細確認URL：{destination_url}
+販売・案内条件：{promotion_context}
 
 執筆条件：
-- 冒頭に「※本記事はアフィリエイト広告を利用しています。」と明記
+- アフィリエイトを含む場合は、冒頭に「※本記事はアフィリエイト広告を利用しています。」と明記
+- 院内・店舗販売だけの場合は、実態に合う「取扱商品・サービスのご案内です」などの表記にする
 - 6,000〜10,000字を目安に、内容の密度を優先
 - 各見出しはPREP法（結論→理由→具体例→結論）を基本にする
 - 事実は商品ページ資料の範囲だけを使う
 - 使っていない商品を使ったように書かない。架空の体験談・口コミは禁止
 - デメリット、注意点、向かない人も誠実に説明
-- アフィリエイトリンクをMarkdownリンクで、導入後・比較検討後・まとめ付近の最大3か所に自然に設置
+- 購入・詳細確認URLをMarkdownリンクで、導入後・比較検討後・まとめ付近の最大3か所に自然に設置
 - リンク文言は「公式サイトで詳しく確認する」など内容が分かる表現にする
 - 過度な煽り、限定性の捏造、効果保証は禁止
 - 最後の「まとめ」では、商品が向く人・向かない人を短く再確認する
@@ -275,6 +332,78 @@ def write_article(
         callback,
         temperature=0.65,
     )
+
+
+def create_sales_assets(
+    client,
+    model: str,
+    page: dict,
+    intent: str,
+    article: str,
+    destination_url: str,
+    promotion_context: str,
+    callback=None,
+) -> dict:
+    prompt = f"""【追加販促コンテンツ】
+以下の資料と完成記事だけを根拠に、販促素材をJSONで作成してください。
+
+商品資料：
+---
+{page['text']}
+---
+想定読者：
+---
+{intent}
+---
+完成記事：
+---
+{article}
+---
+購入・詳細確認URL：{destination_url}
+販売・案内条件：{promotion_context}
+
+条件：
+- 未確認の価格、効果、実績、口コミ、限定性を創作しない
+- 医療・健康・美容分野では効能を断定しない
+- 販売目的に合う広告・PR表記と、押し売りにならないCTAを使う
+- landing_pageは「悩みへの共感→選ばれる理由→特徴→向く人・向かない人→注意点→FAQ→CTA」の順でMarkdown執筆
+- gbp_postは店舗販売を含む場合にGoogleビジネスプロフィール向け、含まない場合は空文字
+- store_popは店舗販売を含む場合にA4店内POP用の短い原稿、含まない場合は空文字
+- seo_keywordsは検索意図別に分類した文字列配列
+- compliance_checkは公開前確認事項の文字列配列
+
+次のJSONだけを出力：
+{{
+  "product_summary": "確認できた商品情報と未確認事項の要約",
+  "seo_keywords": {{"main": [], "problems": [], "comparison": [], "usage": []}},
+  "landing_page": "Markdownの販売ページ原稿",
+  "gbp_post": "Googleビジネスプロフィール投稿文",
+  "store_pop": "A4店内POP原稿",
+  "compliance_check": []
+}}"""
+    last_error: Optional[Exception] = None
+    for attempt in range(2):
+        retry = "" if not attempt else "\n前回はJSONが不完全でした。短く調整し、有効なJSONだけを最後まで出力してください。"
+        raw = call_llm(
+            client, model, prompt + retry, 12000, callback,
+            response_mime_type="application/json", temperature=0.35,
+        )
+        cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.I)
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start >= 0 and end > start:
+            cleaned = cleaned[start:end + 1]
+        try:
+            data = json.loads(re.sub(r",\s*([}\]])", r"\1", cleaned))
+            if isinstance(data, dict):
+                for key, default in (
+                    ("product_summary", ""), ("seo_keywords", {}), ("landing_page", ""),
+                    ("gbp_post", ""), ("store_pop", ""), ("compliance_check", []),
+                ):
+                    data.setdefault(key, default)
+                return data
+        except (json.JSONDecodeError, TypeError) as exc:
+            last_error = exc
+    raise ValueError(f"追加販促コンテンツを正しい形式で生成できませんでした：{last_error}")
 
 
 def markdown_to_wordpress_html(markdown_text: str) -> str:
@@ -331,18 +460,81 @@ def display_error(exc: Exception) -> None:
         st.error(f"処理を完了できませんでした：{text}")
 
 
-def result_downloads(result: dict) -> None:
+def download_payloads(result: dict, plan: dict, assets: dict) -> tuple[str, dict[str, bytes]]:
+    stamp = result.get("generated_at") or datetime.now(JST).strftime("%Y%m%d_%H%M")
     html = markdown_to_wordpress_html(result["article"])
     bundle = (
         "# 想定読者の悩み\n\n" + result["intent"]
         + "\n\n# 記事の構成案\n\n" + result["outline"]
         + "\n\n# 完成した本文\n\n" + result["article"]
     )
-    col1, col2 = st.columns(2)
-    with col1:
-        st.download_button("記事一式をダウンロード", bundle.encode("utf-8-sig"), "affiliate_article.md", "text/markdown", use_container_width=True)
-    with col2:
-        st.download_button("WordPress用HTML", html.encode("utf-8-sig"), "affiliate_article_wordpress.html", "text/html", use_container_width=True)
+    files = {
+        f"affiliate_article_{stamp}.md": bundle.encode("utf-8-sig"),
+        f"affiliate_article_wordpress_{stamp}.html": html.encode("utf-8-sig"),
+        f"product_research_{stamp}.md": (
+            "# 商品調査資料\n\n" + result.get("page", {}).get("text", "")
+            + "\n\n# 商品情報の要約\n\n" + str(assets.get("product_summary", ""))
+            + "\n\n# SEOキーワード\n\n" + json.dumps(assets.get("seo_keywords", {}), ensure_ascii=False, indent=2)
+        ).encode("utf-8-sig"),
+        f"sales_landing_page_{stamp}.md": str(assets.get("landing_page", "")).encode("utf-8-sig"),
+        f"store_promotion_{stamp}.txt": (
+            "Googleビジネスプロフィール投稿\n\n" + str(assets.get("gbp_post", ""))
+            + "\n\n店内POP原稿\n\n" + str(assets.get("store_pop", ""))
+            + "\n\n公開前チェック\n\n" + "\n".join(f"- {x}" for x in assets.get("compliance_check", []))
+        ).encode("utf-8-sig"),
+        f"affiliate_social_posts_{stamp}.txt": result.get("social_text_override", social_text(plan)).encode("utf-8-sig"),
+        f"affiliate_creative_prompts_{stamp}.md": result.get("creative_prompt_override", creative_prompt_text(plan)).encode("utf-8-sig"),
+    }
+    return stamp, files
+
+
+def all_files_zip(files: dict[str, bytes]) -> bytes:
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for filename, data in files.items():
+            archive.writestr(filename, data)
+    return buffer.getvalue()
+
+
+def render_downloads(result: dict, plan: dict, assets: dict) -> None:
+    stamp, files = download_payloads(result, plan, assets)
+    st.header("ダウンロード")
+    st.info("このタブから個別ファイルまたは一括ZIPをダウンロードできます。ファイル名には生成日時が付きます。")
+    st.download_button(
+        "📦 すべてのファイルを一括ダウンロード",
+        all_files_zip(files),
+        f"affiliate_all_files_{stamp}.zip",
+        "application/zip",
+        use_container_width=True,
+        type="primary",
+    )
+    st.caption("一括ZIPには、商品調査、SEO記事、WordPress HTML、LP原稿、店舗販促、SNS投稿文、制作プロンプトが入っています。")
+    mime_types = {
+        ".md": "text/markdown",
+        ".html": "text/html",
+        ".txt": "text/plain",
+    }
+    st.subheader("個別ダウンロード")
+    for filename, data in files.items():
+        if "_wordpress_" in filename:
+            label = "WordPress用HTML"
+        elif "_social_" in filename:
+            label = "SNS投稿文"
+        elif "_creative_" in filename:
+            label = "画像・動画制作用プロンプト"
+        elif filename.startswith("product_research_"):
+            label = "商品調査・SEOキーワード"
+        elif filename.startswith("sales_landing_page_"):
+            label = "販売ページ（LP）原稿"
+        elif filename.startswith("store_promotion_"):
+            label = "GBP・店内POP・公開前チェック"
+        else:
+            label = "記事一式（Markdown）"
+        extension = next((ext for ext in mime_types if filename.endswith(ext)), ".txt")
+        st.download_button(
+            label, data, filename, mime_types[extension],
+            use_container_width=True, key=f"download_{filename}",
+        )
 
 
 def safe_item(value, text_key: str = "text") -> dict:
@@ -407,54 +599,84 @@ def render_social_results(plan: dict) -> None:
     with tabs[6]:
         st.caption("全素材に20項目の販促デザイン品質基準を適用します。音声ナレーションなしのタイピング風テロップ、3.5〜4秒の表紙、明るく心地よいBGM、自然な改行、正式名称の厳守、プロ3視点による再検品まで指定します。")
         st.markdown(creative_prompt_text(plan))
-    st.download_button("SNS投稿文をまとめてダウンロード", social_text(plan).encode("utf-8-sig"), "affiliate_social_posts.txt", "text/plain", use_container_width=True)
-    st.download_button(
-        "画像・動画制作用プロンプトをダウンロード",
-        creative_prompt_text(plan).encode("utf-8-sig"),
-        "affiliate_creative_prompts.md",
-        "text/markdown",
-        use_container_width=True,
-    )
 
 
-st.title("アフィリエイト記事・SNS一括生成")
-st.caption("商品ページを読み込み、SEO記事・SNS投稿・画像／動画制作用プロンプトまでまとめて作成します。")
+st.title("物販記事・販促コンテンツ一括生成")
+st.caption("商品名または商品ページから調査し、SEO記事・LP・店舗販促・SNS・制作プロンプトをまとめて作成します。")
 
 with st.sidebar:
     st.header("無料AI設定")
     api_key = st.text_input("Gemini APIキー", value=secret_value("GEMINI_API_KEY") or "", type="password")
     model = st.text_input("モデル", value=secret_value("GEMINI_MODEL") or "gemini-3.5-flash-lite")
-    st.caption("Google AI Studioの無料枠を利用します。APIキーはファイルに保存されません。")
+    st.caption("Google AI Studioの無料枠を優先して利用します。APIキーはファイルに保存されません。")
 
-product_url = st.text_input("アフィリエイト商品のページURL", placeholder="https://example.com/product")
-affiliate_url = st.text_input("アフィリ用URL", placeholder="https://example.com/affiliate-link")
+sales_mode = st.radio(
+    "販売目的", ["アフィリエイト", "院内・店舗販売", "両方"], horizontal=True,
+    help="広告表記、CTA、GBP・店内POPの生成内容を目的に合わせます。",
+)
+product_name = st.text_input("商品名", placeholder="商品名だけでも調査を開始できます")
+product_url = st.text_input("商品ページURL（任意）", placeholder="https://example.com/product")
+destination_url = st.text_input("購入・詳細確認用URL", placeholder="アフィリURL、公式商品ページ、予約・問い合わせページなど")
+with st.expander("店舗・商品情報（任意）"):
+    manufacturer = st.text_input("メーカー名")
+    store_name = st.text_input("店舗・院・サービスの正式名称")
 
 if st.button("記事を生成する", type="primary", use_container_width=True):
     if not api_key:
         st.error("左側の設定欄にGemini APIキーを入力してください。")
         st.stop()
+    if not product_name.strip() and not product_url.strip():
+        st.error("商品名または商品ページURLのどちらかを入力してください。")
+        st.stop()
+    if not destination_url.strip():
+        st.error("購入・詳細確認用URLを入力してください。")
+        st.stop()
     try:
-        safe_product_url = validate_public_url(product_url)
-        safe_affiliate_url = validate_public_url(affiliate_url)
+        safe_product_url = validate_public_url(product_url) if product_url.strip() else ""
+        safe_destination_url = validate_public_url(destination_url)
     except Exception as exc:
         st.error(str(exc)); st.stop()
+
+    promotion_context = (
+        f"販売目的：{sales_mode}。店舗・院・サービス正式名称：{store_name or '未入力'}。"
+        f"メーカー名：{manufacturer or '未入力'}。案内先URL：{safe_destination_url}。"
+        "アフィリエイトを含む場合は【PR】と広告開示を明示する。店舗販売を含む場合は、提供された正式名称だけを使い、来店・相談・購入へ穏やかに案内する。"
+    )
 
     client = genai.Client(api_key=api_key)
     try:
         with st.status("商品ページを読み込み、記事とSNS投稿を作成しています…", expanded=True) as status:
-            status.write("商品ページを読み込んでいます…")
-            page = fetch_page(safe_product_url)
+            if safe_product_url:
+                status.write("商品ページを読み込んでいます…")
+                page = fetch_page(safe_product_url)
+                if product_name.strip():
+                    page["text"] = f"入力商品名：{product_name.strip()}\nメーカー名：{manufacturer or '未入力'}\n\n" + page["text"]
+            else:
+                research = call_grounded_research(client, model, product_name.strip(), manufacturer.strip(), status.write)
+                page = {"url": "商品名からのWeb調査", "title": product_name.strip(), "text": research}
             status.write("ステップ1：想定読者の深い悩みを分析しています…")
-            intent = analyze_intent(client, model, page, status.write)
+            intent = analyze_intent(client, model, page, promotion_context, status.write)
             status.write("ステップ2：SEO見出し構成を作成しています…")
-            outline = create_outline(client, model, page, intent, status.write)
+            outline = create_outline(client, model, page, intent, promotion_context, status.write)
             status.write("ステップ3：PREP法で完成本文を執筆しています…")
-            article = write_article(client, model, page, safe_affiliate_url, intent, outline, status.write)
+            article = write_article(client, model, page, safe_destination_url, promotion_context, intent, outline, status.write)
+            status.write("販売ページ・SEOキーワード・店舗販促素材を作成しています…")
+            assets = create_sales_assets(
+                client, model, page, intent, article, safe_destination_url, promotion_context, status.write,
+            )
             status.write("各SNS向けの投稿文・台本・制作プロンプトを作成しています…")
-            plan = generate_social_plan(client, model, article, call_llm, safe_affiliate_url)
-            st.session_state["affiliate_result"] = {"intent": intent, "outline": outline, "article": article, "page": page}
+            plan = generate_social_plan(
+                client, model, article, call_llm, safe_destination_url,
+                promotion_context=promotion_context,
+            )
+            generated_at = datetime.now(JST).strftime("%Y%m%d_%H%M")
+            st.session_state["affiliate_result"] = {
+                "intent": intent, "outline": outline, "article": article,
+                "page": page, "generated_at": generated_at, "sales_mode": sales_mode,
+            }
             st.session_state["affiliate_social_plan"] = plan
-            status.update(label="記事・SNS投稿・制作プロンプトが完成しました", state="complete")
+            st.session_state["affiliate_sales_assets"] = assets
+            status.update(label="記事・LP・店舗販促・SNS・制作プロンプトが完成しました", state="complete")
     except Exception as exc:
         display_error(exc)
     finally:
@@ -462,18 +684,66 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
 
 result = st.session_state.get("affiliate_result")
 plan = st.session_state.get("affiliate_social_plan")
-if result:
+assets = st.session_state.get("affiliate_sales_assets", {})
+if result and plan:
     st.divider()
-    st.header("想定読者の悩み")
-    st.markdown(result["intent"])
-    st.header("記事の構成案")
-    st.markdown(result["outline"])
+    edit_key = result.get("generated_at", "current")
+    research_tab, article_tab, sales_tab, social_tab, download_tab = st.tabs([
+        "🔎 商品調査", "📝 記事・構成", "🛍️ LP・店舗販促", "📱 SNS・制作プロンプト", "📥 ダウンロード",
+    ])
+    with research_tab:
+        st.header("商品調査資料")
+        result["page"]["text"] = st.text_area(
+            "調査内容（編集可）", result["page"].get("text", ""), height=420, key=f"edit_research_{edit_key}",
+        )
+        st.header("商品情報の要約")
+        assets["product_summary"] = st.text_area(
+            "要約（編集可）", str(assets.get("product_summary", "")), height=220, key=f"edit_product_summary_{edit_key}",
+        )
+        st.header("SEOキーワード")
+        st.json(assets.get("seo_keywords", {}))
+    with article_tab:
+        st.header("想定読者の悩み")
+        result["intent"] = st.text_area("想定読者・検索意図（編集可）", result["intent"], height=320, key=f"edit_intent_{edit_key}")
+        st.header("記事の構成案")
+        result["outline"] = st.text_area("見出し構成（編集可）", result["outline"], height=420, key=f"edit_outline_{edit_key}")
+        st.header("完成した本文")
+        result["article"] = st.text_area("記事本文（編集可）", result["article"], height=800, key=f"edit_article_{edit_key}")
+    with sales_tab:
+        st.header("販売ページ（LP）原稿")
+        assets["landing_page"] = st.text_area(
+            "LP原稿（編集可）", str(assets.get("landing_page", "")), height=700, key=f"edit_landing_page_{edit_key}",
+        )
+        if assets.get("gbp_post"):
+            st.header("Googleビジネスプロフィール投稿")
+            assets["gbp_post"] = st.text_area("GBP投稿（編集可）", str(assets["gbp_post"]), height=240, key=f"edit_gbp_{edit_key}")
+        if assets.get("store_pop"):
+            st.header("店内POP原稿")
+            assets["store_pop"] = st.text_area("POP原稿（編集可）", str(assets["store_pop"]), height=280, key=f"edit_store_pop_{edit_key}")
+        st.header("公開前チェック")
+        for item in assets.get("compliance_check", []):
+            st.write(f"- {item}")
+    with social_tab:
+        render_social_results(plan)
+        with st.expander("SNS投稿文をまとめて編集", expanded=False):
+            result["social_text_override"] = st.text_area(
+                "SNS投稿文（編集内容をダウンロードへ反映）",
+                result.get("social_text_override", social_text(plan)),
+                height=500,
+                key=f"edit_social_{edit_key}",
+            )
+        with st.expander("画像・動画制作プロンプトをまとめて編集", expanded=False):
+            result["creative_prompt_override"] = st.text_area(
+                "制作プロンプト（編集内容をダウンロードへ反映）",
+                result.get("creative_prompt_override", creative_prompt_text(plan)),
+                height=700,
+                key=f"edit_prompts_{edit_key}",
+            )
+    with download_tab:
+        render_downloads(result, plan, assets)
+elif result:
     st.header("完成した本文")
     st.markdown(result["article"])
-    result_downloads(result)
-if plan:
-    st.divider()
-    render_social_results(plan)
 
 if result:
     with st.expander("成約率とSEOを高めるための実践提案", expanded=False):
@@ -488,8 +758,9 @@ if result:
 
 with st.expander("無料で使うための注意点"):
     st.markdown("""
-- Google AI StudioでGemini APIキーを作成し、有料請求を設定しなければ無料枠の範囲で利用できます。
-- 無料枠には回数・速度の上限があります。上限時は時間をおいて再実行してください。
+- Google AI Studioの無料枠が提供されているモデル・地域・アカウントでは、その範囲で利用できます。
+- 無料枠、検索連携、回数・速度の条件はGoogle側で変更される場合があります。Google AI Studioの利用状況を確認してください。
+- 商品ページURLを入力すると、そのページを直接取得するため、商品名だけの検索連携を使わずに生成できます。
 - このアプリは画像・動画そのものを生成しないため、追加の画像・動画API料金は発生しません。
 - 出力された制作プロンプトを、お使いの画像生成AI・動画生成AIへ貼り付けて使用してください。
 - 公開前に価格、在庫、特典、薬機法・景品表示法に関わる表現を必ず確認してください。
