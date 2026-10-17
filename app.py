@@ -1,3 +1,4 @@
+import base64
 import ipaddress
 import io
 import json
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 from bs4 import BeautifulSoup
 from google import genai
 from google.genai import types
@@ -67,6 +69,52 @@ def secret_value(name: str) -> Optional[str]:
     return os.getenv(name)
 
 
+def clear_widget_value(key: str) -> None:
+    """入力欄の右側にある✕ボタンから内容を安全に消去する。"""
+    st.session_state[key] = ""
+
+
+def clearable_text_input(
+    label: str,
+    key: str,
+    *,
+    sidebar: bool = False,
+    **kwargs,
+) -> str:
+    """スマートフォンでも押しやすいクリアボタン付きの1行入力欄。"""
+    field_col, clear_col = st.columns([5, 1] if sidebar else [9, 1], vertical_alignment="bottom")
+    with field_col:
+        value = st.text_input(label, key=key, **kwargs)
+    with clear_col:
+        st.button(
+            "✕",
+            key=f"clear_{key}",
+            help=f"「{label}」の入力内容を消去",
+            on_click=clear_widget_value,
+            args=(key,),
+            use_container_width=True,
+        )
+    return value
+
+
+def clearable_text_area(label: str, key: str, **kwargs) -> str:
+    """クリアボタン付きの複数行入力欄。"""
+    st.caption(f"{label}　右の✕で入力内容を消去できます。")
+    field_col, clear_col = st.columns([9, 1], vertical_alignment="top")
+    with field_col:
+        value = st.text_area(label, key=key, label_visibility="collapsed", **kwargs)
+    with clear_col:
+        st.button(
+            "✕",
+            key=f"clear_{key}",
+            help=f"「{label}」の入力内容を消去",
+            on_click=clear_widget_value,
+            args=(key,),
+            use_container_width=True,
+        )
+    return value
+
+
 def normalize_model_name(name: str) -> str:
     value = str(name or "").strip()
     for prefix in ("models/", "publishers/google/models/"):
@@ -87,7 +135,9 @@ def discover_models(client: genai.Client, preferred_model: str) -> list[str]:
         return _MODEL_CACHE[cache_key]
 
     preferred = normalize_model_name(preferred_model)
-    static_candidates = list(dict.fromkeys((preferred, *FALLBACK_MODELS)))
+    static_candidates = list(dict.fromkeys(
+        name for name in (preferred, *FALLBACK_MODELS) if name
+    ))
     discovered: list[str] = []
     try:
         for info in client.models.list():
@@ -671,17 +721,55 @@ def all_files_zip(files: dict[str, bytes]) -> bytes:
     return buffer.getvalue()
 
 
+def new_tab_download_button(
+    label: str,
+    data: bytes,
+    filename: str,
+    mime_type: str,
+    *,
+    primary: bool = False,
+) -> None:
+    """iPhoneでも元のアプリ画面を残せる、新規タブ用ダウンロードリンク。"""
+    encoded = base64.b64encode(data).decode("ascii")
+    safe_label = escape(label)
+    safe_filename = escape(filename, quote=True)
+    safe_mime = escape(mime_type, quote=True)
+    background = "#ff4b4b" if primary else "#ffffff"
+    foreground = "#ffffff" if primary else "#31333f"
+    border = "#ff4b4b" if primary else "#d5d8dc"
+    components.html(
+        f"""
+        <!doctype html>
+        <html lang="ja">
+        <head><meta name="viewport" content="width=device-width, initial-scale=1"></head>
+        <body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+          <a
+            href="data:{safe_mime};base64,{encoded}"
+            download="{safe_filename}"
+            target="_blank"
+            rel="noopener noreferrer"
+            style="box-sizing:border-box;display:flex;width:100%;min-height:46px;align-items:center;justify-content:center;
+                   padding:10px 14px;border:1px solid {border};border-radius:8px;background:{background};
+                   color:{foreground};font-size:16px;font-weight:600;text-decoration:none;text-align:center;"
+          >{safe_label}</a>
+        </body>
+        </html>
+        """,
+        height=54,
+        scrolling=False,
+    )
+
+
 def render_downloads(result: dict, plan: dict, assets: dict) -> None:
     stamp, files = download_payloads(result, plan, assets)
     st.header("ダウンロード")
-    st.info("このタブから個別ファイルまたは一括ZIPをダウンロードできます。ファイル名には生成日時が付きます。")
-    st.download_button(
+    st.info("ダウンロードファイルは新しいタブで開きます。元のアプリ画面はそのまま残るため、ブラウザの元のタブを選ぶと戻れます。ファイル名には生成日時が付きます。")
+    new_tab_download_button(
         "📦 すべてのファイルを一括ダウンロード",
         all_files_zip(files),
         f"affiliate_all_files_{stamp}.zip",
         "application/zip",
-        use_container_width=True,
-        type="primary",
+        primary=True,
     )
     st.caption("一括ZIPには、商品調査、SEO記事、WordPress HTML、LP原稿、店舗販促、SNS投稿文、制作プロンプトが入っています。")
     mime_types = {
@@ -706,10 +794,7 @@ def render_downloads(result: dict, plan: dict, assets: dict) -> None:
         else:
             label = "記事一式（Markdown）"
         extension = next((ext for ext in mime_types if filename.endswith(ext)), ".txt")
-        st.download_button(
-            label, data, filename, mime_types[extension],
-            use_container_width=True, key=f"download_{filename}",
-        )
+        new_tab_download_button(label, data, filename, mime_types[extension])
 
 
 def safe_item(value, text_key: str = "text") -> dict:
@@ -781,10 +866,18 @@ st.caption("商品名または商品ページから調査し、SEO記事・LP・
 
 with st.sidebar:
     st.header("無料AI設定")
-    api_key = st.text_input("Gemini APIキー", value=secret_value("GEMINI_API_KEY") or "", type="password")
-    model = st.text_input(
+    api_key = clearable_text_input(
+        "Gemini APIキー",
+        "gemini_api_key_input",
+        value=secret_value("GEMINI_API_KEY") or "",
+        type="password",
+        sidebar=True,
+    )
+    model = clearable_text_input(
         "優先モデル（通常は変更不要）",
+        "gemini_model_input",
         value=secret_value("GEMINI_MODEL") or "gemini-3.8-flash",
+        sidebar=True,
     )
     st.caption("APIキーで利用可能な文章生成モデルを自動判定します。入力したモデルが使えない場合も自動で切り替えます。APIキーはファイルに保存されません。")
 
@@ -798,20 +891,29 @@ elif sales_mode == "院内・店舗販売":
     st.info("院内や店舗で直接販売する使い方です。購入ページがなければURLは空欄のままで構いません。記事やSNSは『院内でスタッフへお声がけください』などの案内になります。")
 else:
     st.info("『両方』は、院内・店舗でも販売し、来店できない方にはアフィリエイトリンクからオンライン購入を案内する使い方です。購入・詳細確認用URLにはアフィリエイトURLを入力してください。")
-product_name = st.text_input("商品名", placeholder="商品名だけでも調査を開始できます")
-product_url = st.text_input("商品ページURL（任意）", placeholder="https://example.com/product")
+product_name = clearable_text_input(
+    "商品名", "product_name_input", placeholder="商品名だけでも調査を開始できます",
+)
+product_url = clearable_text_input(
+    "商品ページURL（任意）", "product_url_input", placeholder="https://example.com/product",
+)
 if sales_mode == "院内・店舗販売":
     destination_label = "購入・詳細確認用URL（任意）"
     destination_placeholder = "空欄でも生成できます。店舗ページや問い合わせページがあれば入力"
 else:
     destination_label = "アフィリエイトURL（必須）"
     destination_placeholder = "ASPなどで発行された専用のアフィリエイトURL"
-destination_url = st.text_input(destination_label, placeholder=destination_placeholder)
+destination_url = clearable_text_input(
+    destination_label, "destination_url_input", placeholder=destination_placeholder,
+)
 with st.expander("店舗・商品情報（任意）"):
-    manufacturer = st.text_input("メーカー名")
-    store_name = st.text_input("店舗・院・サービスの正式名称")
-    product_notes = st.text_area(
+    manufacturer = clearable_text_input("メーカー名", "manufacturer_input")
+    store_name = clearable_text_input(
+        "店舗・院・サービスの正式名称", "store_name_input",
+    )
+    product_notes = clearable_text_area(
         "商品情報の補足（任意）",
+        "product_notes_input",
         placeholder="自動取得できない場合に、公式ページの商品説明・原材料・内容量・価格・注意事項などを貼り付けてください。",
         help="通常は空欄で構いません。入力した内容は公式URLの取得結果に追加して使います。",
         height=150,
