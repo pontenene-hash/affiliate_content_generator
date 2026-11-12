@@ -1,9 +1,8 @@
-
 name: Affiliate Auto Generator
 
 on:
   schedule:
-    # 日本時間 5日・15日・25日 午前9時
+    # 日本時間 5日・15日・25日 午前9時　(自動実行)
     - cron: '0 0 5,15,25 * *'
   workflow_dispatch:
 
