@@ -1137,3 +1137,23 @@ with st.expander("無料で使うための注意点"):
 - 公開前に価格、在庫、特典、薬機法・景品表示法に関わる表現を必ず確認してください。
 - Instagramの本文URLは通常クリックできないため、プロフィールリンクにもアフィリURLを設定してください。
 """)
+
+
+# 独立追加：既存の手動生成フローに影響させない管理画面
+with st.expander("🗓️ A8.net定期下書き生成（設定・確認）", expanded=False):
+    st.write("毎月5・15・25日の日本時間9時に、最大5記事をWordPress下書きへ保存するための設定です。実行にはGitHub Actionsのセットアップが必要です。")
+    st.warning("A8.netランキング順位と正規アフィリエイトリンクは、会員画面で確認して登録してください。未登録案件は自動記事化しません。")
+    try:
+        from auto_pipeline import GENRES, load_verified_items, db_connect
+        st.write("対象ジャンル：" + "、".join(GENRES))
+        registered = load_verified_items()
+        st.metric("登録済みの確認済み案件", len(registered))
+        if registered:
+            st.dataframe([{"ジャンル": r["genre"], "順位": r["rank"], "案件名": r["title"], "広告リンク": "登録済み" if r["affiliate_url"] else "別ファイルまたは未登録"} for r in registered], use_container_width=True)
+        db = db_connect()
+        rows = db.execute("SELECT genre,title,keyword,wp_id,status,created_at FROM history ORDER BY created_at DESC LIMIT 30").fetchall()
+        if rows:
+            st.dataframe([dict(zip(["ジャンル","タイトル","キーワード","WP ID","状態","作成日時"],r)) for r in rows], use_container_width=True)
+        st.caption("登録方法・GitHub Secrets・WordPress連携の手順は同梱の AUTOMATION_SETUP.md を参照してください。")
+    except Exception as exc:
+        st.error(f"自動化設定の読込に失敗しました: {exc}")
