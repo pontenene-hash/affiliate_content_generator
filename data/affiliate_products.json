@@ -1,3 +1,21 @@
+
 {
-  "products": []
+  "products": [
+    {
+      "id": "a8_urine_cancer_test_001",
+      "name": "尿がん検査くん",
+      "asp": "A8.net",
+      "category": "健康・検査",
+      "approved": true,
+      "enabled": true,
+      "affiliate_url": "https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YRHE",
+      "affiliate_html": "<a href=\"https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" rel=\"nofollow\">【尿がん検査くん】</a>\n<img border=\"0\" width=\"1\" height=\"1\" src=\"https://www15.a8.net/0.gif?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" alt=\"\">",
+      "keywords": [
+        "尿がん検査",
+        "自宅でできるがん検査",
+        "尿検査",
+        "がん検査"
+      ]
+    }
+  ]
 }
