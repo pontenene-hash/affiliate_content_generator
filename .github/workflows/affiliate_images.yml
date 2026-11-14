@@ -1,0 +1,70 @@
+name: Affiliate Image Prompts
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_id:
+        description: 'WordPress draft post ID (e.g. 1006)'
+        required: true
+        type: string
+      title:
+        description: 'Article title'
+        required: true
+        type: string
+      product_name:
+        description: 'Product name'
+        required: true
+        type: string
+      audience:
+        description: 'Target readers'
+        required: false
+        default: '日本の成人読者'
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  create-prompts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Create article metadata
+        env:
+          POST_ID: ${{ inputs.post_id }}
+          ARTICLE_TITLE: ${{ inputs.title }}
+          PRODUCT_NAME: ${{ inputs.product_name }}
+          AUDIENCE: ${{ inputs.audience }}
+        run: |
+          python - <<'PY'
+          import json, os
+          post_id = os.environ['POST_ID'].strip()
+          if not post_id.isdecimal() or int(post_id) <= 0:
+              raise ValueError('post_id must be a positive integer')
+          payload = {
+              'post_id': int(post_id),
+              'title': os.environ['ARTICLE_TITLE'],
+              'product_name': os.environ['PRODUCT_NAME'],
+              'audience': os.environ['AUDIENCE'] or '日本の成人読者',
+          }
+          with open('article.json', 'w', encoding='utf-8') as f:
+              json.dump(payload, f, ensure_ascii=False, indent=2)
+          PY
+      - name: Generate ChatGPT image prompts
+        run: python image_workflow.py prompts --article article.json --output image_prompts
+      - name: Upload prompt files
+        uses: actions/upload-artifact@v4
+        with:
+          name: chatgpt-image-prompts-${{ inputs.post_id }}
+          path: |
+            image_prompts/prompts.md
+            image_prompts/prompts.json
+            image_prompts/manifest.json
+          retention-days: 30
+          if-no-files-found: error
