@@ -95,9 +95,18 @@ def candidates(genre):
 
 
 def load_verified_items():
-    """Verified top-five rows, supplied from A8 member view by owner or permitted integration.
-    No scraping of login, bypassing anti-bot, or guessing affiliate links.
-    """
+    """Approved registered products; legacy ranked records remain supported."""
+    from product_registry import read_items
+    products = read_items()
+    if products:
+        rows = []
+        for item in products:
+            if not item.get('enabled', True): continue
+            if not item.get('affiliate_url') or not item.get('product_url'): continue
+            rows.append({'genre':item.get('genre','健康'), 'rank':0,
+                         'title':item.get('name',''), 'product_url':item['product_url'],
+                         'keyword':item.get('keyword',''), 'affiliate_url':item['affiliate_url']})
+        return rows
     path = Path(config('A8_ITEMS_FILE','data/a8_verified_items.json'))
     if not path.exists(): return []
     rows = json.loads(path.read_text(encoding='utf-8'))
@@ -106,7 +115,7 @@ def load_verified_items():
     for row in rows:
         genre = row.get('genre','')
         rank = row.get('rank')
-        if genre not in GENRES or not isinstance(rank,int) or not 1 <= rank <= 5: continue
+        if genre not in GENRES or type(rank) is not int or not 1 <= rank <= 5: continue
         url = row.get('product_url','').strip()
         if not url: continue
         clean.append({'genre':genre, 'rank':rank, 'title':row.get('title','').strip(), 'product_url':url, 'keyword':row.get('keyword','').strip(), 'affiliate_url':row.get('affiliate_url','').strip()})
