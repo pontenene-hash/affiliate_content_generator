@@ -60,6 +60,7 @@ jobs:
           from product_registry import read_items
 
           items = read_items()
+
           print('Registered products:', len(items))
           print(
               'Enabled products:',
@@ -68,7 +69,7 @@ jobs:
           PY
 
       # Gemini connection test
-      # Only runs when manually requested.
+      # Runs only when requested manually.
       # Does not create WordPress drafts.
       - name: Test Gemini connection
         if: github.event_name == 'workflow_dispatch' && inputs.test_gemini
@@ -80,17 +81,32 @@ jobs:
 
           model = gemini_model()
 
-          print('Testing Gemini model:', model, flush=True)
+          print(
+              'Testing Gemini model:',
+              model,
+              flush=True
+          )
 
           result = llm(
               '接続確認です。「接続成功」とだけ日本語で回答してください。',
               max_tokens=100
           )
 
-          print('Gemini response:', result, flush=True)
-          print('Gemini connection test passed.', flush=True)
+          print(
+              'Gemini response:',
+              result,
+              flush=True
+          )
+
+          print(
+              'Gemini connection test passed.',
+              flush=True
+          )
           PY
 
+      # Article generation
+      # Manual run: maximum 1 article
+      # Scheduled run: maximum 5 articles
       - name: Generate affiliate drafts and creative prompts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -109,14 +125,45 @@ jobs:
 
           from auto_pipeline import run_batch
 
-          dry_run = os.environ.get(
-              'DRY_RUN', 'false'
-          ).lower() == 'true'
+          dry_run = (
+              os.environ.get(
+                  'DRY_RUN',
+                  'false'
+              ).lower() == 'true'
+          )
 
-          print('Dry run:', dry_run, flush=True)
+          event_name = os.environ.get(
+              'GITHUB_EVENT_NAME',
+              ''
+          )
+
+          # Limit manual tests to one article.
+          # Keep scheduled production at five articles.
+          limit = (
+              1 if event_name == 'workflow_dispatch'
+              else 5
+          )
+
+          print(
+              'GitHub event:',
+              event_name,
+              flush=True
+          )
+
+          print(
+              'Dry run:',
+              dry_run,
+              flush=True
+          )
+
+          print(
+              'Article limit:',
+              limit,
+              flush=True
+          )
 
           result = run_batch(
-              limit=5,
+              limit=limit,
               dry_run=dry_run
           )
 
@@ -142,7 +189,8 @@ jobs:
               )
 
           errors = [
-              item for item in result.get('results', [])
+              item
+              for item in result.get('results', [])
               if (
                   item.get('status') in (
                       'error',
@@ -163,16 +211,19 @@ jobs:
 
           print(
               'Completed articles:',
-              result.get('processed', 0)
+              result.get('processed', 0),
+              flush=True
           )
 
           if dry_run:
               print(
                   'Test completed. '
-                  'No WordPress draft was created.'
+                  'No WordPress draft was created.',
+                  flush=True
               )
           PY
 
+      # Upload execution report
       - name: Upload run report
         if: always()
         uses: actions/upload-artifact@v4
@@ -182,6 +233,7 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
+      # Upload blog, SNS, image and video prompts
       - name: Upload creative prompt files
         if: always()
         uses: actions/upload-artifact@v4
