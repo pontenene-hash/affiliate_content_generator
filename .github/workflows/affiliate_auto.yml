@@ -5,7 +5,14 @@ on:
   schedule:
     # 日本時間 毎月5日・15日・25日 午前9時
     - cron: '0 0 5,15,25 * *'
+
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'テストのみ（WordPressには保存しない）'
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -16,6 +23,10 @@ concurrency:
 
 jobs:
   generate:
+    # 定期実行はmainのみ。
+    # 手動実行は選択したブランチでテスト可能。
+    if: github.event_name != 'schedule' || github.ref == 'refs/heads/main'
+
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -32,14 +43,29 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Check Python syntax
+        run: |
+          python -m py_compile auto_pipeline.py
+          python -m py_compile auto_creative.py
+          python -m py_compile social_tools.py
+
       - name: Check registered products
         env:
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
         run: |
-          python -c "from product_registry import read_items; items = read_items(); print('Registered products:', len(items)); print('Enabled products:', sum(bool(x.get('enabled', True)) for x in items))"
+          python - <<'PY'
+          from product_registry import read_items
 
-      - name: Generate affiliate drafts
+          items = read_items()
+          print('Registered products:', len(items))
+          print(
+              'Enabled products:',
+              sum(bool(x.get('enabled', True)) for x in items)
+          )
+          PY
+
+      - name: Generate affiliate drafts and creative prompts
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
@@ -48,4 +74,93 @@ jobs:
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
-        run: python auto_pipeline.py --limit 5
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+
+          from auto_pipeline import run_batch
+
+          dry_run = os.environ.get(
+              'DRY_RUN', 'false'
+          ).lower() == 'true'
+
+          print('Dry run:', dry_run, flush=True)
+
+          result = run_batch(
+              limit=5,
+              dry_run=dry_run
+          )
+
+          print(
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              flush=True
+          )
+
+          with open(
+              'affiliate_run_report.json',
+              'w',
+              encoding='utf-8'
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          errors = [
+              item for item in result.get('results', [])
+              if (
+                  item.get('status') in (
+                      'error',
+                      'manual_link_required'
+                  )
+                  or str(
+                      item.get('creative', '')
+                  ).startswith('error:')
+              )
+          ]
+
+          if errors:
+              print(
+                  'ERROR: Article or creative generation failed.',
+                  file=sys.stderr
+              )
+              sys.exit(1)
+
+          print(
+              'Completed articles:',
+              result.get('processed', 0)
+          )
+
+          if dry_run:
+              print(
+                  'Test completed. '
+                  'No WordPress draft was created.'
+              )
+          PY
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliate-run-report-${{ github.run_number }}
+          path: affiliate_run_report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload creative prompt files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliate-creative-prompts-${{ github.run_number }}
+          path: creative_outputs/
+          retention-days: 30
+          if-no-files-found: ignore
