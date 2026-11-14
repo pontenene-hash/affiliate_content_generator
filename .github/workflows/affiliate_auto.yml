@@ -3,7 +3,7 @@ name: Affiliate Auto Generator
 
 on:
   schedule:
-    # 日本時間 5日・15日・25日 午前9時
+    # 日本時間 毎月5日・15日・25日 午前9時
     - cron: '0 0 5,15,25 * *'
   workflow_dispatch:
 
@@ -33,6 +33,9 @@ jobs:
         run: pip install -r requirements.txt
 
       - name: Check registered products
+        env:
+          GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
         run: |
           python -c "from product_registry import read_items; items = read_items(); print('Registered products:', len(items)); print('Enabled products:', sum(bool(x.get('enabled', True)) for x in items))"
 
@@ -43,4 +46,6 @@ jobs:
           WP_SITE_URL: ${{ secrets.WP_URL }}
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
         run: python auto_pipeline.py --limit 5
