@@ -1,3 +1,15 @@
 {
-  "products": []
+  "products": [
+    {
+      "id": "be2bfe82d8916e04",
+      "asp": "A8.net",
+      "name": "自宅で尿をとって送るだけ！がんリスクが分かる【尿がん検査くん】",
+      "genre": "健康",
+      "product_url": "https://nyogankensa.jp/",
+      "affiliate_url": "https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YRHE",
+      "affiliate_html": "<a href=\"https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" rel=\"nofollow\">【尿がん検査くん】</a>\n<img border=\"0\" width=\"1\" height=\"1\" src=\"https://www15.a8.net/0.gif?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" alt=\"\">",
+      "keyword": "尿がん検査くん 口コミ 評判",
+      "enabled": true
+    }
+  ]
 }
