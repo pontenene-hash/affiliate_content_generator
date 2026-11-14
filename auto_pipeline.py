@@ -343,31 +343,23 @@ def article_html(md):
 
 
 def run_batch(limit=5, dry_run=False):
+    from article_history import load_history, next_topics, save_article, make_record
+
     db = db_connect()
     items = load_verified_items()
     links = affiliate_links()
 
+    # Fail closed if the persistent history cannot be read.
+    history = load_history()
+    tasks = next_topics(items, history, limit)
     report = []
     completed = 0
 
-    for item in items:
+    for item, key, angle, keyword, focus in tasks:
         if completed >= limit:
             break
 
         url = item['product_url']
-
-        key = hashlib.sha256(
-            url.encode('utf-8')
-        ).hexdigest()
-
-        existing = db.execute(
-            'SELECT 1 FROM history '
-            'WHERE item_key=? AND status=?',
-            (key, 'draft')
-        ).fetchone()
-
-        if existing:
-            continue
 
         link = item['affiliate_url'] or links.get(url, '')
 
@@ -383,11 +375,6 @@ def run_batch(limit=5, dry_run=False):
             public_url(link)
 
             page = page_text(url)
-
-            keyword = (
-                item['keyword']
-                or (item['title'] + ' 口コミ')
-            )
 
             competitors = brave_search(keyword, 10)
 
@@ -442,6 +429,12 @@ ASP：{item.get('asp', 'A8.net')}
 
 主キーワード：{keyword}
 
+記事の切り口：{angle}
+
+今回の記事で特に詳しく説明すること：{focus}
+
+他の切り口の記事と同じ一般論だけで終わらず、この検索意図を中心に独自の構成にする。
+
 商品情報（事実はここからのみ）：
 {page['text'][:10000]}
 
@@ -460,7 +453,8 @@ Markdown形式で記事本文のみ出力してください。
                 report.append({
                     'title': item['title'],
                     'status': 'dry_run',
-                    'keyword': keyword
+                    'keyword': keyword,
+                    'angle': angle
                 })
                 completed += 1
                 continue
@@ -482,6 +476,15 @@ Markdown形式で記事本文のみ出力してください。
                 title,
                 article_html(md)
             )
+
+            # Persist immediately after WordPress succeeds, before creative generation.
+            # If this fails, report the draft ID and stop to avoid duplicate posts.
+            try:
+                save_article(make_record(item, key, angle, keyword, title, wp_id))
+            except Exception as history_exc:
+                report.append({'title': title, 'status': 'error', 'wp_id': wp_id,
+                               'reason': 'WordPress下書きは保存済みですが履歴保存に失敗: ' + str(history_exc)[:160]})
+                break
 
             # Record article history
             db.execute(
@@ -536,6 +539,8 @@ Markdown形式で記事本文のみ出力してください。
                 'title': title,
                 'status': 'draft',
                 'wp_id': wp_id,
+                'keyword': keyword,
+                'angle': angle,
                 'creative': creative_status
             })
 

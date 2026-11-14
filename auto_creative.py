@@ -45,7 +45,9 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
                                 promotion_context='アフィリエイト販売。記事への誘導を基本とする。')
     blog = _blog_prompts(article, title, product)
     # The original social_tools covers the main social channels; GBP is added here.
-    snippet = re.sub(r'[#*`>\[\]]', '', article).strip().replace('\n', ' ')
+    snippet = re.sub(r'[#*`>\[\]]', '', article).strip()
+    snippet = re.sub(r'^(?:※?本記事にはアフィリエイト広告が含まれます。|【PR】|PR[:：])\s*', '', snippet).strip()
+    snippet = re.sub(r'\s+', ' ', snippet)
     gbp = {
         'post': f'【PR】{title}\n{snippet[:160]}…\n詳しくはブログ記事をご確認ください。',
         'image_prompt': f'Googleビジネスプロフィール用1:1の明るい説明画像。テーマ：{title}。事実にない商品効果や口コミを描かない。文字は最小限。',

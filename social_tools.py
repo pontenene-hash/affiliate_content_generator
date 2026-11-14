@@ -121,6 +121,38 @@ def _hashtags(value) -> str:
     return str(value or "")
 
 
+def _five_hashtags(value, article: str) -> list[str]:
+    """Normalize Instagram hashtags to exactly five nonempty, distinct tags."""
+    raw = value if isinstance(value, list) else re.findall(r"#[^\s#]+", str(value or ""))
+    tags = []
+    for entry in raw:
+        tag = str(entry).strip().replace('＃', '#').split()[0] if str(entry).strip() else ''
+        tag = '#' + tag.lstrip('#') if tag else ''
+        if tag and tag not in tags:
+            tags.append(tag)
+    fallback = ['#商品選び', '#購入前に確認', '#暮らしのヒント', '#商品レビュー', '#おすすめ情報']
+    for tag in fallback:
+        if len(tags) >= 5:
+            break
+        if tag not in tags:
+            tags.append(tag)
+    return tags[:5]
+
+
+def _fix_video_timing(item: dict) -> None:
+    """Use exact durations adding to 42 seconds, including cover and CTA."""
+    scenes = item.get('scenes', [])
+    if len(scenes) < 3:
+        return
+    # Cover 4s, CTA 4s, remaining 34s distributed across content scenes.
+    # Longer scenes are allowed when the number of scenes is small.
+    content_count = len(scenes) - 2
+    seconds = [4] + [34 // content_count + (1 if i < 34 % content_count else 0) for i in range(content_count)] + [4]
+    for scene, seconds_count in zip(scenes, seconds):
+        scene['duration'] = f'{seconds_count}秒'
+    item['total_duration'] = '42秒'
+
+
 def _validate_social_plan(data: dict) -> None:
     required = (
         "x_posts", "threads", "facebook", "line", "carousel",
@@ -280,6 +312,7 @@ def _ensure_video_scenes(
     for scene in scenes:
         scene["narration"] = _plain_text(scene.get("narration", ""), 45)
     item["scenes"] = scenes
+    _fix_video_timing(item)
     return item
 
 
@@ -570,6 +603,8 @@ def _normalize_social_plan(data: dict, article: str, promotion_context: str = "�
         else:
             last_slide["body"] = f"商品が自分の悩みや希望に合いそうな方は、プロフィールの案内先から詳しく確認してみてください。{disclosure}"
 
+    for key in ("carousel", "reel"):
+        data[key]["hashtags"] = _five_hashtags(data[key].get("hashtags"), article)
     data["creative_prompts"] = _build_creative_prompts(data, article)
     return data
 
@@ -592,7 +627,7 @@ def _generate_social_plan_legacy(client, model: str, article: str, call_llm, aff
 - X、Facebook、Threads、LINE、YouTube概要欄にはURLを省略せず1回入れる
 - Instagram、リール、TikTokはURLに加え「プロフィールのリンクから確認」と案内する
 - 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
-- ハッシュタグは文字列配列にする
+- ハッシュタグは文字列配列にする。Instagramカルーセルとリールは必ず5個にする
 - Instagramカルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人に自然に勧め、プロフィールのリンクへ案内する行動喚起
 - リール、TikTok、YouTubeはいずれも40〜45秒を目安にする
 - 動画台本の最初は0.0秒から表示する3.5〜4秒の表紙シーン、最後は3〜4秒の商品案内と購入導線のシーンにする
@@ -778,11 +813,11 @@ def generate_social_plan(
 - URLが設定されている場合は、Instagram、リール、TikTokで「プロフィールのリンクから確認」と自然に案内する
 - URLが未設定の院内・店舗販売ではURLやプロフィールリンクを創作せず、「院内でスタッフへお声がけください」「ご来店時にご相談ください」と案内する
 - 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
-- ハッシュタグは文字列配列にする
+- ハッシュタグは文字列配列にする。Instagramカルーセルとリールは必ず5個にする
 - カルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人への自然な案内と、設定された購入方法に合う行動喚起
 - カルーセル9枚だけで完成記事の要点を順序よく理解できる構成にする。2枚目で読者の悩み・現状、3〜8枚目で原因・知識・方法・注意点・メリットなど記事の主要点を重複なく割り当てる
 - カルーセル各枚のtitle、body、visualは必ず同じ記事要点を表す。全9枚で同じ主人公・画風・色設計を保ち、表情、動作、背景、小物、構図は各要点に合わせて変える
-- リール、TikTok、YouTubeはいずれも40〜45秒程度、5〜7シーンとする
+- リール、TikTok、YouTubeはいずれも合計42秒、5〜7シーンとする。各シーンの秒数の合計を42秒にする
 - 動画の最初は3.5〜4秒の表紙、最後は3〜4秒の商品案内。中間シーンは4〜6秒を目安にする
 - 動画は完成記事を短く要約する。表紙→悩み・問題提起→原因→解決策・ポイント→商品・サービス紹介→CTAを基本にし、記事にない段階は捏造せず省略・再構成する
 - 動画各シーンのcaption、narration、visualは必ず同じ記事要点を表し、記事と無関係な汎用場面や同じ構図の繰り返しを避ける
