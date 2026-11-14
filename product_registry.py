@@ -9,14 +9,25 @@ import requests
 
 FILE = Path('data/affiliate_products.json')
 
-def parse_ad_code(code):
+def parse_ad_code(code, asp='A8.net'):
+    """Extract a publisher-issued tracking URL without altering its parameters."""
+    from html import unescape
     m = re.search(r'<a\b[^>]*\bhref\s*=\s*["\']([^"\']+)["\']', code, re.I)
-    url = m.group(1) if m else code.strip()
+    url = unescape(m.group(1) if m else code.strip())
     p = urlparse(url)
-    if p.scheme != 'https' or p.hostname not in ('px.a8.net', 'www.a8.net') or not p.path.startswith('/svt/ejp'):
-        raise ValueError('A8.netの正規広告コード（px.a8.net/svt/ejp）を貼り付けてください')
-    if not p.query or 'a8mat=' not in p.query:
-        raise ValueError('広告コードの識別パラメータがありません')
+    if p.scheme != 'https' or not p.hostname or p.username or p.password:
+        raise ValueError('HTTPSの正規アフィリエイトURLを入力してください')
+    host = p.hostname.lower()
+    if asp == 'A8.net':
+        if host not in ('px.a8.net','www.a8.net') or not p.path.startswith('/svt/ejp') or 'a8mat=' not in p.query:
+            raise ValueError('A8.netの正規広告コード（px.a8.net/svt/ejp）を貼り付けてください')
+    elif asp == 'infotop':
+        if host not in ('infotop.jp','www.infotop.jp') and not host.endswith('.infotop.jp'):
+            raise ValueError('インフォトップが発行したinfotop.jpドメインのリンクを入力してください')
+        if not p.path or p.path == '/':
+            raise ValueError('商品別のアフィリエイトリンクを入力してください')
+    else:
+        raise ValueError('対応していないASPです')
     return url
 
 def github_config():
@@ -56,13 +67,13 @@ def write_items(items):
         FILE.parent.mkdir(parents=True, exist_ok=True)
         FILE.write_text(payload, encoding='utf-8')
 
-def normalize_item(name, genre, product_url, ad_code, keyword='', enabled=True):
+def normalize_item(name, genre, product_url, ad_code, keyword='', enabled=True, asp='A8.net'):
     name = name.strip()
     if not name: raise ValueError('商品名を入力してください')
     product_url = product_url.strip()
     p = urlparse(product_url)
     if p.scheme not in ('https','http') or not p.hostname or p.username or p.password:
         raise ValueError('公式の商品紹介ページURLを入力してください')
-    ad_url = parse_ad_code(ad_code)
+    ad_url = parse_ad_code(ad_code, asp)
     import hashlib
-    return {'id':hashlib.sha256(ad_url.encode()).hexdigest()[:16], 'name':name, 'genre':genre, 'product_url':product_url, 'affiliate_url':ad_url, 'affiliate_html':ad_code.strip(), 'keyword':keyword.strip(), 'enabled':bool(enabled)}
+    return {'id':hashlib.sha256((asp + ':' + ad_url).encode()).hexdigest()[:16], 'asp':asp, 'name':name, 'genre':genre, 'product_url':product_url, 'affiliate_url':ad_url, 'affiliate_html':ad_code.strip(), 'keyword':keyword.strip(), 'enabled':bool(enabled)}

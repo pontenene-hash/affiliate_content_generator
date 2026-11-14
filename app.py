@@ -1139,25 +1139,26 @@ with st.expander("無料で使うための注意点"):
 """)
 
 
-# A8.net商品登録：手動SEO生成には影響しない独立画面
-with st.expander("🛍️ A8.net 提携商品を登録・停止・削除", expanded=False):
+# ASP商品登録：手動SEO生成には影響しない独立画面
+with st.expander("🛍️ A8.net・インフォトップ 商品登録・停止・削除", expanded=False):
     from product_registry import read_items, write_items, normalize_item, github_config
-    st.caption("A8.netで提携承認された商品の広告コードを登録します。承認メール連携は不要です。")
+    st.caption("A8.netまたはインフォトップで発行した正規広告リンクを登録します。承認メール連携は不要です。")
     if not github_config():
         st.warning("GitHub同期が未設定です。ここで登録してもGitHub Actionsには反映されない場合があります。StreamlitのSecretsに GITHUB_TOKEN / GITHUB_REPOSITORY を設定してください。")
     try:
         registry = read_items()
         st.write(f"登録商品数：{len(registry)}件 / 有効：{sum(x.get('enabled', True) for x in registry)}件")
-        with st.form('a8_product_register', clear_on_submit=True):
+        with st.form('asp_product_register', clear_on_submit=True):
+            reg_asp = st.selectbox('ASP（広告サービス）', ['A8.net', 'infotop'])
             reg_name = st.text_input('商品名（必須）')
             reg_genre = st.selectbox('ジャンル', ['コスメ・スキンケア','エステ・ダイエット','美容グッズ','ペット商品','グルメ・食品','健康','暮らし','エンタメ','学び・資格'])
             reg_url = st.text_input('公式の商品紹介ページURL（必須）', placeholder='https://example.com/product')
-            reg_code = st.text_area('A8.netの通常広告コード（必須）', placeholder='<a href="https://px.a8.net/svt/ejp?...">商品名</a>')
+            reg_code = st.text_area('ASP発行の広告URLまたはHTMLコード（必須）', placeholder='A8.netまたはインフォトップの管理画面で発行したリンク')
             reg_kw = st.text_input('SEOキーワード（任意）')
             add = st.form_submit_button('商品を登録', type='primary')
         if add:
             try:
-                new = normalize_item(reg_name, reg_genre, reg_url, reg_code, reg_kw)
+                new = normalize_item(reg_name, reg_genre, reg_url, reg_code, reg_kw, asp=reg_asp)
                 if any(x['id']==new['id'] for x in registry):
                     st.error('同じ広告コードの商品は登録済みです。')
                 else:
@@ -1168,7 +1169,7 @@ with st.expander("🛍️ A8.net 提携商品を登録・停止・削除", expan
                 st.error(f'登録できませんでした：{e}')
         for item in registry:
             with st.container(border=True):
-                st.write(f"**{item['name']}**  ｜ {item.get('genre','')}  ｜ {'有効' if item.get('enabled',True) else '停止中'}")
+                st.write(f"**{item['name']}**  ｜ {item.get('asp','A8.net')} ｜ {item.get('genre','')}  ｜ {'有効' if item.get('enabled',True) else '停止中'}")
                 st.caption(item.get('product_url',''))
                 left, right = st.columns(2)
                 with left:
@@ -1188,7 +1189,7 @@ with st.expander("🛍️ A8.net 提携商品を登録・停止・削除", expan
         st.error(f'商品一覧を取得できませんでした：{e}')
 
 # 独立追加：既存の手動生成フローに影響させない管理画面
-with st.expander("🗓️ A8.net定期下書き生成（設定・確認）", expanded=False):
+with st.expander("🗓️ ASP定期下書き生成（設定・確認）", expanded=False):
     st.write("毎月5・15・25日の日本時間9時に、最大5記事をWordPress下書きへ保存するための設定です。実行にはGitHub Actionsのセットアップが必要です。")
     st.warning("A8.netランキング順位と正規アフィリエイトリンクは、会員画面で確認して登録してください。未登録案件は自動記事化しません。")
     try:
