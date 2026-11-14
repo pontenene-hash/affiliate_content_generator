@@ -1,0 +1,56 @@
+
+name: Affiliate Image Install
+
+on:
+  workflow_dispatch:
+    inputs:
+      post_id:
+        description: "WordPress draft post ID"
+        required: true
+        default: "1006"
+      zip_file:
+        description: "Image ZIP file in repository"
+        required: true
+        default: "nyogankensa_images_4.zip"
+
+permissions:
+  contents: read
+
+jobs:
+  install-images:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate images and WordPress draft
+        env:
+          WP_SITE_URL: ${{ secrets.WP_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          POST_ID: ${{ inputs.post_id }}
+          ZIP_FILE: ${{ inputs.zip_file }}
+        run: |
+          python image_workflow.py install \
+            --post-id "$POST_ID" \
+            --zip "$ZIP_FILE"
+
+      - name: Upload images to WordPress draft
+        env:
+          WP_SITE_URL: ${{ secrets.WP_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          POST_ID: ${{ inputs.post_id }}
+          ZIP_FILE: ${{ inputs.zip_file }}
+        run: |
+          python image_workflow.py install \
+            --post-id "$POST_ID" \
+            --zip "$ZIP_FILE" \
+            --apply
