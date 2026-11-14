@@ -14,6 +14,12 @@ on:
         type: boolean
         default: true
 
+      test_gemini:
+        description: 'Gemini接続テストを実行する'
+        required: true
+        type: boolean
+        default: true
+
 permissions:
   contents: read
 
@@ -23,10 +29,6 @@ concurrency:
 
 jobs:
   generate:
-    # 定期実行はmainのみ。
-    # 手動実行は選択したブランチでテスト可能。
-    if: github.event_name != 'schedule' || github.ref == 'refs/heads/main'
-
     runs-on: ubuntu-latest
     timeout-minutes: 120
 
@@ -63,6 +65,30 @@ jobs:
               'Enabled products:',
               sum(bool(x.get('enabled', True)) for x in items)
           )
+          PY
+
+      # Gemini connection test
+      # Only runs when manually requested.
+      # Does not create WordPress drafts.
+      - name: Test Gemini connection
+        if: github.event_name == 'workflow_dispatch' && inputs.test_gemini
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          from auto_pipeline import llm, gemini_model
+
+          model = gemini_model()
+
+          print('Testing Gemini model:', model, flush=True)
+
+          result = llm(
+              '接続確認です。「接続成功」とだけ日本語で回答してください。',
+              max_tokens=100
+          )
+
+          print('Gemini response:', result, flush=True)
+          print('Gemini connection test passed.', flush=True)
           PY
 
       - name: Generate affiliate drafts and creative prompts
