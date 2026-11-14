@@ -20,8 +20,9 @@ on:
         type: boolean
         default: true
 
+# GitHub記事履歴の読み書きに必要
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: affiliate-auto-generator
@@ -50,11 +51,14 @@ jobs:
           python -m py_compile auto_pipeline.py
           python -m py_compile auto_creative.py
           python -m py_compile social_tools.py
+          python -m py_compile article_history.py
+          python -m py_compile product_registry.py
 
       - name: Check registered products
         env:
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
           python - <<'PY'
           from product_registry import read_items
@@ -114,8 +118,15 @@ jobs:
           WP_SITE_URL: ${{ secrets.WP_URL }}
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+
+          # Existing product registry authentication
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+          # GitHub article history authentication
+          GH_HISTORY_TOKEN: ${{ github.token }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
         run: |
           python - <<'PY'
