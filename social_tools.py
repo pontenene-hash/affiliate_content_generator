@@ -166,12 +166,48 @@ def _fallback_video_points(article):
     return result
 
 
-def _ensure_link(value, url):
+def _strip_affiliate_link(value, url):
+    """Remove the supplied affiliate URL from profile-link-only platforms."""
     value = str(value or '').strip()
+    url = str(url or '').strip()
     if not url:
         return value
-    # Keep exactly one occurrence of the supplied URL; do not rewrite other URLs.
-    value = value.replace(url, '').strip()
+    pieces = re.split(r'([?&=])', url)
+    flexible = ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
+                       for p in pieces if p)
+    value = re.sub(flexible, '', value, flags=re.I)
+    base = url.split('?', 1)[0]
+    if base:
+        value = re.sub(re.escape(base) + r'\s*\?\s*(?:\n|$)', '', value, flags=re.I)
+    if '?' in url:
+        query = url.split('?', 1)[1]
+        value = re.sub(r'(?m)^\s*' + re.escape(query) + r'\s*$', '', value)
+    return re.sub(r'\n{3,}', '\n\n', value).strip()
+
+
+def _ensure_link(value, url):
+    """Output one complete affiliate URL; remove broken/duplicate versions."""
+    value = str(value or '').strip()
+    url = str(url or '').strip()
+    if not url:
+        return value
+    # A Gemini response can split a query string after '?' or '&'.
+    # Match only the supplied affiliate URL, with optional whitespace at
+    # those boundaries, rather than deleting unrelated external links.
+    pieces = re.split(r'([?&=])', url)
+    flexible = ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
+                       for p in pieces if p)
+    value = re.sub(flexible, '', value, flags=re.I)
+    # Also strip a partial link emitted on a separate line, such as
+    # https://px.a8.net/svt/ejp? followed by a8mat=... on the next line.
+    base = url.split('?', 1)[0]
+    if base:
+        value = re.sub(re.escape(base) + r'\s*\?\s*(?:\n|$)', '', value, flags=re.I)
+    # Remove a stray query line only if it exactly matches the known query.
+    if '?' in url:
+        query = url.split('?', 1)[1]
+        value = re.sub(r'(?m)^\s*' + re.escape(query) + r'\s*$', '', value)
+    value = re.sub(r'\n{3,}', '\n\n', value).strip()
     return value + '\n' + url
 
 
@@ -454,6 +490,12 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
                 scene['narration'] = _review_safe_copy(scene.get('narration')) or '詳しくは記事をご確認ください。'
                 scene['visual'] = _review_safe_copy(scene.get('visual')) or '記事の内容を紹介する明るい生活場面'
 
+    # Profile-only platforms: do not print raw affiliate links in captions.
+    carousel['caption'] = _mark_text(_strip_affiliate_link(carousel.get('caption'), affiliate_url), promotion_context)
+    for media_key in ('reel', 'tiktok'):
+        media = _as_dict(data.get(media_key), 'caption')
+        media['caption'] = _mark_text(_strip_affiliate_link(media.get('caption'), affiliate_url), promotion_context)
+        data[media_key] = media
     data['creative_prompts'] = _build_creative_prompts(data, article)
     return data
 
