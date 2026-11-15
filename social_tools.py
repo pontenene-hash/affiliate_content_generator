@@ -130,10 +130,12 @@ def _disclosure(context):
 
 
 def _mark_text(value, context):
-    """Place one disclosure at the start without duplicating an existing one."""
+    """Show the appropriate disclosure exactly once, at the beginning."""
     value = str(value or '').strip()
     mark = _disclosure(context)
-    value = re.sub(r'^(?:(?:【PR】|【商品案内】)\s*)+', '', value).strip()
+    # Remove only disclosure labels, never product names or supplied links.
+    value = re.sub(r'【(?:PR|商品案内)】', '', value)
+    value = re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', value).strip()
     return mark + ('\n' + value if value else '')
 
 
@@ -185,6 +187,7 @@ def _fix_video_timing(item):
 
 
 def _ensure_video_scenes(item, media_key, article, promotion_context='アフィリエイト販売'):
+    """Keep article-grounded scenes, avoid repeated points, and total 42 seconds."""
     scenes = [_as_dict(scene, 'narration') for scene in _as_list(item.get('scenes'))]
     title = _plain_text(item.get('title') or item.get('caption') or _article_title(article), 28)
     if not scenes or scenes[0].get('scene_type') != 'opening_cover':
@@ -192,35 +195,37 @@ def _ensure_video_scenes(item, media_key, article, promotion_context='アフィ�
                           'narration': title, 'visual': '記事のテーマが伝わる明るい表紙。人物と文字を分離'})
     else:
         scenes[0]['scene_type'] = 'opening_cover'
+
     if _store_only(promotion_context):
         caption, narration = '院内でご相談ください', '気になる方は、ご来店時にスタッフへお気軽にご相談ください。'
     elif media_key == 'youtube':
         caption, narration = '概要欄から詳しく確認', '気になる方は、概要欄のリンクから詳しくご確認ください。'
     else:
         caption, narration = '詳しくはプロフィールへ', '気になる方は、プロフィールのリンクから詳しくご確認ください。'
-    if scenes and scenes[-1].get('scene_type') == 'affiliate_cta':
-        scenes[-1].update({'caption': caption, 'narration': narration})
-    else:
-        scenes.append({'scene_type': 'affiliate_cta', 'caption': caption, 'narration': narration,
-                       'visual': '明るく自然な商品案内。人物と文字の領域を分離'})
 
-    # Six content scenes + 4-second cover + 4-second CTA = 42 seconds.
-    # Existing Gemini scenes are retained; only missing points are supplemented
-    # from the actual article. Never repeat a scene just to fill the time.
-    middle = scenes[1:-1]
-    middle = [x for x in middle if x.get('scene_type') != 'affiliate_cta']
+    cta = {'scene_type': 'affiliate_cta', 'caption': caption, 'narration': narration,
+           'visual': '明るく自然な商品案内。人物と文字の領域を分離'}
+    # Discard any Gemini-generated intermediate CTA; use a single final CTA.
+    middle = [scene for scene in scenes[1:] if scene.get('scene_type') != 'affiliate_cta']
     article_points = _fallback_video_points(article)
-    seen = set()
+    seen_headings, seen_bodies = set(), set()
     selected = []
     for scene in middle + article_points:
         heading = _plain_text(scene.get('caption'), 40)
         body = _plain_text(scene.get('narration'), 45)
         if not heading and not body:
             continue
-        fingerprint = (heading + ' ' + body).strip()
-        if fingerprint in seen:
+        # Ignore identical or near-identical points after whitespace/punctuation normalization.
+        heading_key = re.sub(r'[\W_]+', '', heading).lower()
+        body_key = re.sub(r'[\W_]+', '', body).lower()
+        if (heading_key and heading_key in seen_headings) or (body_key and body_key in seen_bodies):
             continue
-        seen.add(fingerprint)
+        if heading_key:
+            seen_headings.add(heading_key)
+        if body_key:
+            seen_bodies.add(body_key)
+        scene = dict(scene)
+        scene.update({'scene_type': 'content', 'caption': heading, 'narration': body})
         selected.append(scene)
         if len(selected) == 6:
             break
@@ -228,14 +233,10 @@ def _ensure_video_scenes(item, media_key, article, promotion_context='アフィ�
         selected = [{'scene_type': 'content', 'caption': '記事のポイント',
                      'narration': '商品の特徴や注意点を記事で確認できます。',
                      'visual': '記事の要点を示す生活場面'}]
-    # If the source article has fewer than six distinct points, keep fewer
-    # scenes rather than fabricate claims; their durations may be longer.
-    scenes = [scenes[0]] + selected + [scenes[-1]]
+    scenes = [scenes[0]] + selected + [cta]
     for scene in scenes:
         scene['narration'] = _plain_text(scene.get('narration'), 45)
         scene['caption'] = _plain_text(scene.get('caption'), 40)
-        if scene not in (scenes[0], scenes[-1]):
-            scene['scene_type'] = 'content'
     item['scenes'] = scenes
     _fix_video_timing(item)
     return item
