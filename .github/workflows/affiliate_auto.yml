@@ -20,7 +20,18 @@ on:
         type: boolean
         default: true
 
-# GitHub記事履歴の読み書きに必要
+      regenerate_creative:
+        description: '保存済み記事の制作プロンプトのみ再生成（記事は新規作成しない）'
+        required: true
+        type: boolean
+        default: false
+
+      existing_post_id:
+        description: '再生成するWordPress記事ID（例：1016）'
+        required: false
+        type: string
+        default: ''
+
 permissions:
   contents: write
 
@@ -53,6 +64,7 @@ jobs:
           python -m py_compile social_tools.py
           python -m py_compile article_history.py
           python -m py_compile product_registry.py
+          python -m py_compile retry_creative.py
 
       - name: Check registered products
         env:
@@ -72,11 +84,8 @@ jobs:
           )
           PY
 
-      # Gemini connection test
-      # Runs only when requested manually.
-      # Does not create WordPress drafts.
       - name: Test Gemini connection
-        if: github.event_name == 'workflow_dispatch' && inputs.test_gemini
+        if: github.event_name == 'workflow_dispatch' && inputs.test_gemini && !inputs.regenerate_creative
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
@@ -108,10 +117,37 @@ jobs:
           )
           PY
 
-      # Article generation
-      # Manual run: maximum 1 article
-      # Scheduled run: maximum 5 articles
+      - name: Regenerate creative prompts from existing WordPress draft
+        if: github.event_name == 'workflow_dispatch' && inputs.regenerate_creative
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WP_SITE_URL: ${{ secrets.WP_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_HISTORY_TOKEN: ${{ github.token }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          EXISTING_POST_ID: ${{ inputs.existing_post_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          post_id = os.environ.get('EXISTING_POST_ID', '').strip()
+
+          if not re.fullmatch(r'[1-9][0-9]*', post_id):
+              raise SystemExit('A positive numeric WordPress post ID is required')
+
+          subprocess.run(
+              ['python', 'retry_creative.py', '--post-id', post_id],
+              check=True
+          )
+          PY
+
       - name: Generate affiliate drafts and creative prompts
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.regenerate_creative)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
@@ -119,11 +155,9 @@ jobs:
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
 
-          # Existing product registry authentication
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
 
-          # GitHub article history authentication
           GH_HISTORY_TOKEN: ${{ github.token }}
           GITHUB_BRANCH: ${{ github.ref_name }}
 
@@ -148,8 +182,6 @@ jobs:
               ''
           )
 
-          # Limit manual tests to one article.
-          # Keep scheduled production at five articles.
           limit = (
               1 if event_name == 'workflow_dispatch'
               else 5
@@ -234,7 +266,6 @@ jobs:
               )
           PY
 
-      # Upload execution report
       - name: Upload run report
         if: always()
         uses: actions/upload-artifact@v4
@@ -244,7 +275,6 @@ jobs:
           retention-days: 30
           if-no-files-found: ignore
 
-      # Upload blog, SNS, image and video prompts
       - name: Upload creative prompt files
         if: always()
         uses: actions/upload-artifact@v4
