@@ -1,4 +1,4 @@
-# SAFE_SOCIAL_QUALITY_PATCH_V3
+# SAFE_SOCIAL_QUALITY_PATCH_V4
 """SNS copy and independent image/video creative briefs for saved affiliate articles."""
 import json
 import re
@@ -82,9 +82,17 @@ def _five_hashtags(value, article=''):
 
 
 def _plain_text(value, limit=90):
+    """Keep whole Japanese phrases rather than cutting inside words or sentences."""
     value = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', str(value or ''))
     value = re.sub(r'[*_`>#]', '', value)
-    return re.sub(r'\s+', ' ', value).strip()[:limit]
+    value = re.sub(r'\s+', ' ', value).strip()
+    if limit is None or len(value) <= limit:
+        return value
+    prefix = value[:limit]
+    # Prefer a complete sentence or a phrase boundary; never append a fragment.
+    boundaries = [m.end() for m in re.finditer(r'[。！？!?、，,；;：:]|\s+', prefix)]
+    viable = [n for n in boundaries if n >= max(8, int(limit * .45))]
+    return prefix[:viable[-1]].strip() if viable else prefix.rstrip('、，,・/（(').strip() + '…'
 
 
 def _safe_filename_part(value, limit=24):
@@ -92,7 +100,7 @@ def _safe_filename_part(value, limit=24):
 
 
 def _article_title(article):
-    for line in article.splitlines():
+    for line in str(article or '').splitlines():
         match = re.match(r'^#\s+(.+)', line.strip())
         if match:
             return _plain_text(match.group(1), 80)
@@ -101,7 +109,7 @@ def _article_title(article):
 
 def _article_sections(article):
     sections, current, body = [], None, []
-    for line in article.splitlines():
+    for line in str(article or '').splitlines():
         match = re.match(r'^(#{2,3})\s+(.+)', line.strip())
         if match:
             if current:
@@ -119,11 +127,11 @@ def _article_sections(article):
 
 
 def _affiliate_mode(context):
-    return 'アフィリエイト' in context or '両方' in context
+    return 'アフィリエイト' in str(context) or '両方' in str(context)
 
 
 def _store_only(context):
-    return '販売目的：院内・店舗販売' in context and '案内先URL：未設定' in context
+    return '販売目的：院内・店舗販売' in str(context) and '案内先URL：未設定' in str(context)
 
 
 def _disclosure(context):
@@ -131,86 +139,54 @@ def _disclosure(context):
 
 
 def _mark_text(value, context):
-    """Show the appropriate disclosure exactly once, at the beginning."""
-    value = str(value or '').strip()
-    mark = _disclosure(context)
-    # Remove only disclosure labels, never product names or supplied links.
-    value = re.sub(r'【(?:PR|商品案内)】', '', value)
-    value = re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', value).strip()
-    return mark + ('\n' + value if value else '')
-
+    value = re.sub(r'【(?:PR|商品案内)】', '', str(value or '')).strip()
+    value = re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', value)
+    return _disclosure(context) + ('\n' + value if value else '')
 
 
 def _fallback_line(article):
-    """Create a neutral, complete LINE message."""
-    title = _article_title(article)
-    return (
-        f'{title}について、商品の特徴や利用前に'
-        '確認したいポイントを記事にまとめました。'
-        '\\n詳しくは記事でご確認ください。'
-    )
+    return (f'{_article_title(article)}について、商品の特徴や利用前に'
+            '確認したいポイントを記事にまとめました。\n詳しくは記事でご確認ください。')
 
 
 def _fallback_video_points(article):
-    """Create distinct content scenes using only article headings and excerpts."""
-    sections = _article_sections(article)
     result = []
-    for section in sections:
+    for section in _article_sections(article):
         heading = _plain_text(section.get('heading'), 30)
         summary = _plain_text(section.get('summary'), 45)
-        if not heading or not summary:
-            continue
-        result.append({
-            'scene_type': 'content', 'caption': heading,
-            'narration': summary,
-            'visual': f'記事の「{heading}」を表す具体的な生活場面。記事にない事実を描かない。',
-        })
+        if heading and summary:
+            result.append({'scene_type': 'content', 'caption': heading,
+                           'narration': summary,
+                           'visual': f'記事の「{heading}」を表す具体的な生活場面。記事にない事実を描かない。'})
     return result
 
 
+def _url_pattern(url):
+    """Match only the known URL, allowing whitespace around query separators."""
+    pieces = re.split(r'([?&=])', str(url or '').strip())
+    return ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
+                   for p in pieces if p)
+
+
 def _strip_affiliate_link(value, url):
-    """Remove the supplied affiliate URL from profile-link-only platforms."""
-    value = str(value or '').strip()
-    url = str(url or '').strip()
+    value, url = str(value or '').strip(), str(url or '').strip()
     if not url:
         return value
-    pieces = re.split(r'([?&=])', url)
-    flexible = ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
-                       for p in pieces if p)
-    value = re.sub(flexible, '', value, flags=re.I)
+    value = re.sub(_url_pattern(url), '', value, flags=re.I)
     base = url.split('?', 1)[0]
-    if base:
-        value = re.sub(re.escape(base) + r'\s*\?\s*(?:\n|$)', '', value, flags=re.I)
     if '?' in url:
+        value = re.sub(re.escape(base) + r'\s*\?\s*(?=\n|$)', '', value, flags=re.I)
         query = url.split('?', 1)[1]
         value = re.sub(r'(?m)^\s*' + re.escape(query) + r'\s*$', '', value)
     return re.sub(r'\n{3,}', '\n\n', value).strip()
 
 
 def _ensure_link(value, url):
-    """Output one complete affiliate URL; remove broken/duplicate versions."""
-    value = str(value or '').strip()
-    url = str(url or '').strip()
+    value, url = str(value or '').strip(), str(url or '').strip()
     if not url:
         return value
-    # A Gemini response can split a query string after '?' or '&'.
-    # Match only the supplied affiliate URL, with optional whitespace at
-    # those boundaries, rather than deleting unrelated external links.
-    pieces = re.split(r'([?&=])', url)
-    flexible = ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
-                       for p in pieces if p)
-    value = re.sub(flexible, '', value, flags=re.I)
-    # Also strip a partial link emitted on a separate line, such as
-    # https://px.a8.net/svt/ejp? followed by a8mat=... on the next line.
-    base = url.split('?', 1)[0]
-    if base:
-        value = re.sub(re.escape(base) + r'\s*\?\s*(?:\n|$)', '', value, flags=re.I)
-    # Remove a stray query line only if it exactly matches the known query.
-    if '?' in url:
-        query = url.split('?', 1)[1]
-        value = re.sub(r'(?m)^\s*' + re.escape(query) + r'\s*$', '', value)
-    value = re.sub(r'\n{3,}', '\n\n', value).strip()
-    return value + '\n' + url
+    value = _strip_affiliate_link(value, url)
+    return value + ('\n' if value else '') + url
 
 
 def _fix_video_timing(item):
@@ -218,91 +194,48 @@ def _fix_video_timing(item):
     if len(scenes) < 3:
         return
     middle = len(scenes) - 2
-    durations = [4] + [34 // middle + (1 if i < 34 % middle else 0) for i in range(middle)] + [4]
+    durations = [4] + [34 // middle + (1 if i < 34 % middle else 0)
+                       for i in range(middle)] + [4]
     for scene, duration in zip(scenes, durations):
         scene['duration'] = f'{duration}秒'
     item['total_duration'] = '42秒'
 
 
-
-def _ensure_video_scenes(
-    item, media_key, article,
-    promotion_context='アフィリエイト販売'
-):
-    """Build 42-second scenes with one opening and one final CTA."""
-    scenes = [
-        _as_dict(scene, 'narration')
-        for scene in _as_list(item.get('scenes'))
-    ]
-    title = _plain_text(
-        item.get('title') or _article_title(article), 28
-    )
-    opening = {
-        'scene_type': 'opening_cover',
-        'caption': title,
-        'narration': title,
-        'visual': '明るい表紙。文字と人物を分離する。'
-    }
-
+def _ensure_video_scenes(item, media_key, article, promotion_context='アフィリエイト販売'):
+    scenes = [_as_dict(scene, 'narration') for scene in _as_list(item.get('scenes'))]
+    title = _plain_text(item.get('title') or _article_title(article), 28)
+    opening = {'scene_type': 'opening_cover', 'caption': title,
+               'narration': title, 'visual': '明るい表紙。文字と人物を分離する。'}
     if _store_only(promotion_context):
-        caption = '院内でご相談ください'
-        narration = 'ご来店時にスタッフへお気軽にご相談ください。'
+        caption, narration = '院内でご相談ください', 'ご来店時にスタッフへお気軽にご相談ください。'
     elif media_key == 'youtube':
-        caption = '概要欄から詳しく確認'
-        narration = '詳しくは概要欄のリンクをご確認ください。'
+        caption, narration = '概要欄から詳しく確認', '詳しくは概要欄のリンクをご確認ください。'
     else:
-        caption = '詳しくはプロフィールへ'
-        narration = '詳しくはプロフィールのリンクをご確認ください。'
-
-    cta = {
-        'scene_type': 'affiliate_cta',
-        'caption': caption,
-        'narration': narration,
-        'visual': '自然な商品案内。文字の安全余白を確保する。'
-    }
-
-    candidates = [
-        scene for scene in scenes
-        if scene.get('scene_type') not in (
-            'opening_cover', 'affiliate_cta'
-        )
-    ]
+        caption, narration = '詳しくはプロフィールへ', '詳しくはプロフィールのリンクをご確認ください。'
+    cta = {'scene_type': 'affiliate_cta', 'caption': caption,
+           'narration': narration, 'visual': '自然な商品案内。文字の安全余白を確保する。'}
+    candidates = [scene for scene in scenes
+                  if scene.get('scene_type') not in ('opening_cover', 'affiliate_cta')]
     candidates += _fallback_video_points(article)
-
-    selected = []
-    seen = set()
+    selected, seen = [], set()
     for scene in candidates:
-        heading = _review_safe_copy(
-            _plain_text(scene.get('caption'), 40)
-        )
-        body = _review_safe_copy(
-            _plain_text(scene.get('narration'), 45)
-        )
+        heading = _review_safe_copy(_plain_text(scene.get('caption'), 40))
+        body = _review_safe_copy(_plain_text(scene.get('narration'), 45))
         if not heading or not body:
             continue
-        key = re.sub(r'[\\W_]+', '', heading).lower()
+        key = re.sub(r'[\W_]+', '', heading).lower()
         if not key or key in seen:
             continue
         seen.add(key)
-        selected.append({
-            'scene_type': 'content',
-            'caption': heading,
-            'narration': body,
-            'visual': _review_safe_copy(
-                scene.get('visual')
-            ) or '記事に沿った明るい生活場面'
-        })
+        selected.append({'scene_type': 'content', 'caption': heading,
+                         'narration': body,
+                         'visual': _review_safe_copy(scene.get('visual')) or '記事に沿った明るい生活場面'})
         if len(selected) == 6:
             break
-
     if not selected:
-        selected.append({
-            'scene_type': 'content',
-            'caption': '記事のポイント',
-            'narration': '商品の特徴や注意点を記事でご確認ください。',
-            'visual': '記事の内容を表す明るい生活場面'
-        })
-
+        selected.append({'scene_type': 'content', 'caption': '記事のポイント',
+                         'narration': '商品の特徴や注意点を記事でご確認ください。',
+                         'visual': '記事の内容を表す明るい生活場面'})
     item['scenes'] = [opening] + selected + [cta]
     _fix_video_timing(item)
     return item
@@ -316,7 +249,6 @@ def _add_filename_instruction(item, filename):
 
 
 def _add_video_audio_instructions(item, media_key):
-    # Retained as a public helper for compatibility with existing callers.
     text = ('人の声・ナレーションは禁止。日本語のタイピング風テロップと、'
             '0秒から途切れない著作権上利用可能な明るいBGMを使用する。')
     if text not in item.get('prompt', ''):
@@ -350,8 +282,7 @@ def _video_prompt_item(plan_item, size, duration, filename, vertical):
             f'シーン{index}（{scene.get("duration", "")}、{scene.get("scene_type", "content")}）：'
             f'上部見出し「{_plain_text(scene.get("caption"), 80)}」。'
             f'下部テロップ「{_plain_text(scene.get("narration"), 90)}」。'
-            f'映像「{_plain_text(scene.get("visual") or scene.get("direction"), 180)}」。'
-        )
+            f'映像「{_plain_text(scene.get("visual") or scene.get("direction"), 180)}」。')
     prompt = (
         '各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。'
         'プロのイラストレーターと映像ディレクターが共同制作する、求心力のある高品質なイラスト動画。'
@@ -369,9 +300,9 @@ def _video_prompt_item(plan_item, size, duration, filename, vertical):
         '最後だけフェードアウト。BGMの音切れを禁止する。'
         '人物、商品、重要な小物と文字を重ねない。操作UIの安全余白を確保する。'
         'SNS名・SNSロゴ・アプリアイコン・ユーザー名・ファイル名・透かしを画面に出さない。'
-        f'{TEXT_LAYOUT_RULES}{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}'
-    )
-    return {'size': size, 'duration': duration, 'catch_copy': _plain_text(scenes[0].get('caption'), 80) if scenes else '',
+        f'{TEXT_LAYOUT_RULES}{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}')
+    return {'size': size, 'duration': duration,
+            'catch_copy': _plain_text(scenes[0].get('caption'), 80) if scenes else '',
             'layout': layout, 'font_spec': font, 'output_filename': filename, 'prompt': prompt}
 
 
@@ -434,30 +365,22 @@ def _build_creative_prompts_original(plan, article):
     }
     return apply_quality_rules(prompts)
 
-def _build_creative_prompts(plan, article):
-    """Preserve the original creative builder and sanitize its output."""
-    prompts = _build_creative_prompts_original(plan, article)
 
+def _build_creative_prompts(plan, article):
+    prompts = _build_creative_prompts_original(plan, article)
     def clean_item(item):
         if isinstance(item, list):
             return [clean_item(x) for x in item]
         if not isinstance(item, dict):
             return item
         result = dict(item)
-        for key in (
-            'catch_copy', 'sub_copy', 'body_text',
-            'heading', 'prompt'
-        ):
+        for key in ('catch_copy', 'sub_copy', 'body_text', 'heading', 'prompt'):
             if key in result:
                 result[key] = _review_safe_copy(result[key])
         return result
-
     return {key: clean_item(value) for key, value in prompts.items()}
 
 
-
-# Claims requiring independent verification are excluded from generated promotional copy.
-# This is a conservative text filter, not an official-source fact checker.
 _REVIEW_CLAIM = re.compile(
     r'(?:[0-9０-９][0-9０-９,，.．]*\s*円|送料無料|送料(?:が)?無料|'
     r'ステージ\s*[0-9０-９ⅠⅡⅢⅣ]+|早期発見|早期がん|'
@@ -466,27 +389,22 @@ _REVIEW_CLAIM = re.compile(
     r'人間ドック(?:の代わり|に比べて))', re.I)
 
 
-
 def _review_safe_copy(value):
-    """Remove unsupported claims without leaving broken fragments."""
+    """Conservatively exclude unsupported claims; never claim factual verification."""
     text = str(value or '')
-    parts = re.split(r'(?<=[。！？!?])|\\n', text)
+    parts = re.split(r'(?<=[。！？!?])|\n', text)
     result = []
     for part in parts:
         part = part.strip()
-        if not part:
-            continue
-        if _REVIEW_CLAIM.search(part):
-            continue
-        result.append(part)
-    return '\\n'.join(result).strip()
+        if part and not _REVIEW_CLAIM.search(part):
+            result.append(part)
+    return '\n'.join(result).strip()
 
 
 def _strip_duplicate_tags(text, tags):
-    """Keep hashtags in a single final tag line, not repeated in the caption."""
     text = str(text or '').strip()
     for tag in tags:
-        text = re.sub(r'(?<![\w#＃])' + re.escape(tag) + r'(?![\w])', '', text)
+        text = re.sub(r'(?<![\w#＃])' + re.escape(str(tag)) + r'(?![\w])', '', text)
     return re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', text).strip()
 
 
@@ -495,6 +413,7 @@ def _render_tags_once(text, tags):
     clean = _strip_duplicate_tags(text, tags)
     return clean + ('\n' + _hashtags(tags) if tags else '')
 
+
 def _normalize_social_plan(data, article, promotion_context='アフィリエイト販売', affiliate_url=''):
     if not isinstance(data, dict):
         raise ValueError('SNS構成が正しい形式ではありません。')
@@ -502,9 +421,8 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
     data['x_posts'] = [_as_dict(x) for x in _as_list(data.get('x_posts'))]
     for post in data['x_posts']:
         post['text'] = _mark_text(_ensure_link(_review_safe_copy(post.get('text')), affiliate_url), promotion_context)
-    data['x_image'] = _as_dict(data.get('x_image'))
-    for post in data['x_posts']:
         post['hashtags'] = [t for t in _as_list(post.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
+    data['x_image'] = _as_dict(data.get('x_image'))
     for key in ('threads', 'facebook', 'line'):
         item = _as_dict(data.get(key))
         base_text = item.get('text')
@@ -515,7 +433,8 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
         data[key] = item
     carousel = _as_dict(data.get('carousel'), 'caption')
     carousel['caption'] = _mark_text(_review_safe_copy(carousel.get('caption')), promotion_context)
-    carousel['hashtags'] = _five_hashtags([t for t in _five_hashtags(carousel.get('hashtags'), article) if not _REVIEW_CLAIM.search(t)], article)
+    carousel['hashtags'] = _five_hashtags([t for t in _five_hashtags(carousel.get('hashtags'), article)
+                                          if not _REVIEW_CLAIM.search(t)], article)
     slides = [_as_dict(x, 'body') for x in _as_list(carousel.get('slides'))]
     sections = _article_sections(article)
     while len(slides) < 9:
@@ -537,9 +456,10 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
     for key in ('reel', 'youtube', 'tiktok'):
         item = _as_dict(data.get(key), 'caption')
         field = 'description' if key == 'youtube' else 'caption'
-        item[field] = _mark_text(_ensure_link(_review_safe_copy(item.get(field)), affiliate_url if key == 'youtube' else ''), promotion_context)
+        item[field] = _mark_text(_ensure_link(_review_safe_copy(item.get(field)),
+                                              affiliate_url if key == 'youtube' else ''), promotion_context)
         if key == 'reel':
-            item['hashtags'] = _five_hashtags([t for t in _five_hashtags(item.get('hashtags'), article) if not _REVIEW_CLAIM.search(t)], article)
+            item['hashtags'] = _five_hashtags(item.get('hashtags'), article)
         item['hashtags'] = [t for t in _as_list(item.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
         data[key] = _ensure_video_scenes(item, key, article, promotion_context)
         for scene in data[key]['scenes']:
@@ -547,8 +467,6 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
                 scene['caption'] = _review_safe_copy(scene.get('caption')) or '記事のポイント'
                 scene['narration'] = _review_safe_copy(scene.get('narration')) or '詳しくは記事をご確認ください。'
                 scene['visual'] = _review_safe_copy(scene.get('visual')) or '記事の内容を紹介する明るい生活場面'
-
-    # Profile-only platforms: do not print raw affiliate links in captions.
     carousel['caption'] = _mark_text(_strip_affiliate_link(carousel.get('caption'), affiliate_url), promotion_context)
     for media_key in ('reel', 'tiktok'):
         media = _as_dict(data.get(media_key), 'caption')
@@ -581,7 +499,6 @@ def _validate_social_plan(data):
 
 
 def _generate_social_plan_legacy(client, model, article, call_llm, affiliate_url=''):
-    """Compatibility entry point: uses the maintained generation pipeline."""
     return generate_social_plan(client, model, article, call_llm, affiliate_url=affiliate_url)
 
 
