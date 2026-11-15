@@ -1,0 +1,80 @@
+name: Safe Social Tools Patch
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply_changes:
+        description: '確認後に修正をコミットする（初回は false）'
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.ref == 'refs/heads/feature-affiliate-sns'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature-affiliate-sns
+          persist-credentials: true
+      - name: Verify source files and working tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f social_tools.py
+          test -f social_tools_safe_patch.py
+          test ! -e social_tools.py.bak
+          test -z "$(git status --porcelain)"
+          python -m py_compile social_tools.py social_tools_safe_patch.py
+      - name: Apply patch locally and validate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python social_tools_safe_patch.py social_tools.py
+          python -m py_compile social_tools.py
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          old = ast.parse(Path('social_tools.py.bak').read_text(encoding='utf-8'))
+          new = ast.parse(Path('social_tools.py').read_text(encoding='utf-8'))
+          changed = {'_mark_text', '_ensure_video_scenes'}
+          def without_changed(tree):
+              return [ast.dump(n, include_attributes=False) for n in tree.body
+                      if not (isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and n.name in changed)]
+          assert without_changed(old) == without_changed(new), 'Unexpected changes outside two target functions'
+          old_names = {n.name for n in old.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+          new_names = {n.name for n in new.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+          assert old_names == new_names, 'Function set changed'
+          print('PASS: only two intended functions changed; all other module nodes preserved')
+          PY
+          git diff --check
+          git diff --stat -- social_tools.py
+          git diff -- social_tools.py
+          rm social_tools.py.bak
+      - name: Commit only after explicit approval
+        if: ${{ inputs.apply_changes == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- social_tools.py; then
+            echo 'No changes to commit.'
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- social_tools.py
+          git commit -m 'Safely normalize disclosures and deduplicate video scenes'
+          git push origin HEAD:feature-affiliate-sns
+      - name: Summary
+        shell: bash
+        run: |
+          if [[ '${{ inputs.apply_changes }}' == 'true' ]]; then
+            echo 'Patch validation completed; commit step ran.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Dry run completed. No source files were committed.' >> "$GITHUB_STEP_SUMMARY"
+          fi
