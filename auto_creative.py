@@ -2,7 +2,9 @@
 """Generate reusable creative briefs from the actual saved affiliate article."""
 
 import json
+import random
 import re
+import time
 from pathlib import Path
 
 from google import genai
@@ -20,20 +22,59 @@ HEALTH_SAFETY = (
 
 
 def _gemini_call(client, model, prompt, max_tokens, **kwargs):
-    response = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            max_output_tokens=max_tokens,
-            temperature=kwargs.get('temperature', 0.35),
-            response_mime_type=kwargs.get('response_mime_type')
-        )
-    )
+    """Retry temporary Gemini API failures without changing the request."""
+    max_attempts = 5
 
-    if not response.text:
-        raise ValueError('Gemini returned an empty creative plan')
+    for attempt in range(max_attempts):
+        try:
+            response = client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=kwargs.get('temperature', 0.35),
+                    response_mime_type=kwargs.get('response_mime_type')
+                )
+            )
 
-    return response.text
+            if not response.text:
+                raise ValueError('Gemini returned an empty creative plan')
+
+            return response.text
+
+        except Exception as exc:
+            message = str(exc).lower()
+
+            retryable = any(
+                marker in message
+                for marker in (
+                    '503',
+                    '429',
+                    'unavailable',
+                    'resource_exhausted',
+                    'deadline_exceeded',
+                    'timed out',
+                    'timeout',
+                    'connection reset'
+                )
+            )
+
+            if not retryable or attempt == max_attempts - 1:
+                raise
+
+            wait_seconds = min(
+                60,
+                5 * (2 ** attempt)
+            ) + random.uniform(0, 2)
+
+            print(
+                f'Gemini一時エラー。'
+                f'{attempt + 1}/{max_attempts}回目失敗。'
+                f'{wait_seconds:.1f}秒後に再試行します。',
+                flush=True
+            )
+
+            time.sleep(wait_seconds)
 
 
 def _blog_prompts(article, title, product):
@@ -79,7 +120,6 @@ def _clean_article_snippet(article, title, max_chars=145):
         if not line:
             continue
 
-        # Remove markdown headings, formatting and links.
         line = re.sub(r'^#{1,6}\s*', '', line)
         line = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', line)
         line = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', line)
@@ -90,7 +130,6 @@ def _clean_article_snippet(article, title, max_chars=145):
         if not line:
             continue
 
-        # Avoid repeated title and advertising disclosure.
         if line == title:
             continue
 
@@ -108,7 +147,6 @@ def _clean_article_snippet(article, title, max_chars=145):
         ):
             continue
 
-        # Skip headings and short fragments.
         if len(line) < 25:
             continue
 
@@ -166,7 +204,6 @@ def build_bundle(
 ):
     client = genai.Client(api_key=api_key)
 
-    # Preserve all existing social channels and creative output.
     plan = generate_social_plan(
         client,
         model,
