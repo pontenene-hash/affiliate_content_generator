@@ -369,24 +369,59 @@ def _build_creative_prompts(plan, article):
     return apply_quality_rules(prompts)
 
 
+
+# Claims requiring independent verification are excluded from generated promotional copy.
+# This is a conservative text filter, not an official-source fact checker.
+_REVIEW_CLAIM = re.compile(
+    r'(?:[0-9０-９][0-9０-９,，.．]*\s*円|送料無料|送料(?:が)?無料|'
+    r'ステージ\s*[0-9０-９ⅠⅡⅢⅣ]+|早期発見|早期がん|'
+    r'全身のがん|特許技術|検査精度|感度\s*[0-9０-９]|'
+    r'がんを(?:発見|診断|予防|治療)|お得な定期プラン|'
+    r'人間ドック(?:の代わり|に比べて))', re.I)
+
+
+def _review_safe_copy(value):
+    """Drop complete promotional sentences containing unverified claims."""
+    text = str(value or '')
+    chunks = re.split(r'(?<=[。！？!?])|\n', text)
+    retained = [part.strip() for part in chunks if part.strip() and not _REVIEW_CLAIM.search(part)]
+    return '\n'.join(retained).strip()
+
+
+def _strip_duplicate_tags(text, tags):
+    """Keep hashtags in a single final tag line, not repeated in the caption."""
+    text = str(text or '').strip()
+    for tag in tags:
+        text = re.sub(r'(?<![\w#＃])' + re.escape(tag) + r'(?![\w])', '', text)
+    return re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', text).strip()
+
+
+def _render_tags_once(text, tags):
+    tags = _as_list(tags)
+    clean = _strip_duplicate_tags(text, tags)
+    return clean + ('\n' + _hashtags(tags) if tags else '')
+
 def _normalize_social_plan(data, article, promotion_context='アフィリエイト販売', affiliate_url=''):
     if not isinstance(data, dict):
         raise ValueError('SNS構成が正しい形式ではありません。')
     mark = _disclosure(promotion_context)
     data['x_posts'] = [_as_dict(x) for x in _as_list(data.get('x_posts'))]
     for post in data['x_posts']:
-        post['text'] = _mark_text(_ensure_link(post.get('text'), affiliate_url), promotion_context)
+        post['text'] = _mark_text(_ensure_link(_review_safe_copy(post.get('text')), affiliate_url), promotion_context)
     data['x_image'] = _as_dict(data.get('x_image'))
+    for post in data['x_posts']:
+        post['hashtags'] = [t for t in _as_list(post.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
     for key in ('threads', 'facebook', 'line'):
         item = _as_dict(data.get(key))
         base_text = item.get('text')
         if key == 'line' and not re.sub(r'(?:【PR】|【商品案内】|https?://\S+|\s)+', '', str(base_text or '')):
             base_text = _fallback_line(article)
-        item['text'] = _mark_text(_ensure_link(base_text, affiliate_url), promotion_context)
+        item['text'] = _mark_text(_ensure_link(_review_safe_copy(base_text), affiliate_url), promotion_context)
+        item['hashtags'] = [t for t in _as_list(item.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
         data[key] = item
     carousel = _as_dict(data.get('carousel'), 'caption')
-    carousel['caption'] = _mark_text(carousel.get('caption'), promotion_context)
-    carousel['hashtags'] = _five_hashtags(carousel.get('hashtags'), article)
+    carousel['caption'] = _mark_text(_review_safe_copy(carousel.get('caption')), promotion_context)
+    carousel['hashtags'] = _five_hashtags([t for t in _five_hashtags(carousel.get('hashtags'), article) if not _REVIEW_CLAIM.search(t)], article)
     slides = [_as_dict(x, 'body') for x in _as_list(carousel.get('slides'))]
     sections = _article_sections(article)
     while len(slides) < 9:
@@ -396,6 +431,10 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
                        'body': source.get('summary', '詳しい内容は記事をご確認ください。'),
                        'visual': '記事の要点を表す具体的な日本の生活場面'})
     slides = slides[:9]
+    for slide in slides:
+        slide['title'] = _review_safe_copy(slide.get('title')) or '記事のポイント'
+        slide['body'] = _review_safe_copy(slide.get('body')) or '詳しい内容は記事でご確認ください。'
+        slide['visual'] = _review_safe_copy(slide.get('visual')) or '記事の内容に沿った生活場面'
     slides[-1]['title'] = '詳しく確認してみませんか'
     slides[-1]['body'] = (('気になる方は、ご来店時にスタッフへご相談ください。' if _store_only(promotion_context)
                           else '詳しくはプロフィールの案内先からご確認ください。') + mark)
@@ -404,10 +443,17 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
     for key in ('reel', 'youtube', 'tiktok'):
         item = _as_dict(data.get(key), 'caption')
         field = 'description' if key == 'youtube' else 'caption'
-        item[field] = _mark_text(_ensure_link(item.get(field), affiliate_url if key == 'youtube' else ''), promotion_context)
+        item[field] = _mark_text(_ensure_link(_review_safe_copy(item.get(field)), affiliate_url if key == 'youtube' else ''), promotion_context)
         if key == 'reel':
-            item['hashtags'] = _five_hashtags(item.get('hashtags'), article)
+            item['hashtags'] = _five_hashtags([t for t in _five_hashtags(item.get('hashtags'), article) if not _REVIEW_CLAIM.search(t)], article)
+        item['hashtags'] = [t for t in _as_list(item.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
         data[key] = _ensure_video_scenes(item, key, article, promotion_context)
+        for scene in data[key]['scenes']:
+            if scene.get('scene_type') == 'content':
+                scene['caption'] = _review_safe_copy(scene.get('caption')) or '記事のポイント'
+                scene['narration'] = _review_safe_copy(scene.get('narration')) or '詳しくは記事をご確認ください。'
+                scene['visual'] = _review_safe_copy(scene.get('visual')) or '記事の内容を紹介する明るい生活場面'
+
     data['creative_prompts'] = _build_creative_prompts(data, article)
     return data
 
@@ -442,7 +488,7 @@ def _generate_social_plan_legacy(client, model, article, call_llm, affiliate_url
 def generate_social_plan(client, model, article, call_llm, affiliate_url='',
                          promotion_context='アフィリエイト販売'):
     prompt = f'''あなたは日本語の広告・SNS制作の専門家です。次の完成記事だけを情報源に、投稿文と映像台本をJSONで返してください。
-記事中に記載された数値も裏付けが不明な場合はSNSで強調しないでください。
+記事中に記載された数値も裏付けが不明な場合はSNSで強調しないでください。価格・送料・ステージ別の検査性能・早期発見・特許・定期プラン・医療機関との比較は、記事に書かれていても公式一次資料の確認ができない限りSNS本文・画像文字・動画テロップに含めない。文章は助詞で途切れず一文を完結させる。ハッシュタグは本文に重複記載せず、別フィールドだけに置く。
 医療・健康・美容商品の診断・治療・予防効果を断定せず、架空の価格、送料、検査精度、口コミ、人物、限定性、認証を追加しない。
 検査サービスを医療機関での診断の代わりと表現しない。正式名称を変更しない。
 アフィリエイトなら全投稿に【PR】、店頭案内のみなら【商品案内】を表示。
@@ -488,16 +534,16 @@ def social_text(plan):
     parts = ['X（旧Twitter）投稿案']
     for index, raw in enumerate(_as_list(plan.get('x_posts')), 1):
         post = _as_dict(raw)
-        parts.append(f'\n【パターン{index}】\n{post.get("text", "")}\n{_hashtags(post.get("hashtags"))}')
+        parts.append(f'\n【パターン{index}】\n' + _render_tags_once(post.get('text', ''), post.get('hashtags', [])))
     for key, label in (('threads', 'Threads'), ('facebook', 'Facebook')):
         item = _as_dict(plan.get(key))
-        parts.append(f'\n\n{label}投稿\n{item.get("text", "")}\n{_hashtags(item.get("hashtags"))}')
+        parts.append(f'\n\n{label}投稿\n' + _render_tags_once(item.get('text', ''), item.get('hashtags', [])))
     parts.append(f'\n\nLINE配信文\n{_as_dict(plan.get("line")).get("text", "")}')
     carousel = _as_dict(plan.get('carousel'), 'caption')
-    parts.append(f'\n\nInstagram投稿\n{carousel.get("caption", "")}\n{_hashtags(carousel.get("hashtags"))}')
+    parts.append('\n\nInstagram投稿\n' + _render_tags_once(carousel.get('caption', ''), carousel.get('hashtags', [])))
     for key, label in (('reel', 'Instagramリール'), ('youtube', 'YouTube'), ('tiktok', 'TikTok')):
         item = _as_dict(plan.get(key), 'caption')
-        parts.append(f'\n\n{label}\n{item.get("title", "")}\n{item.get("caption", item.get("description", ""))}\n{_hashtags(item.get("hashtags"))}')
+        parts.append(f'\n\n{label}\n{item.get("title", "")}\n' + _render_tags_once(item.get('caption', item.get('description', '')), item.get('hashtags', [])))
     return '\n'.join(parts).strip()
 
 
