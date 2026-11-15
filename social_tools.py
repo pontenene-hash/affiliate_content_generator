@@ -130,11 +130,38 @@ def _disclosure(context):
 
 
 def _mark_text(value, context):
+    """Place one disclosure at the start without duplicating an existing one."""
     value = str(value or '').strip()
     mark = _disclosure(context)
-    if not value.startswith(mark):
-        value = mark + '\n' + re.sub(r'^(?:【PR】|【商品案内】)\s*', '', value)
-    return value
+    value = re.sub(r'^(?:(?:【PR】|【商品案内】)\s*)+', '', value).strip()
+    return mark + ('\n' + value if value else '')
+
+
+def _fallback_line(article):
+    """Use article-derived wording, never invent a product claim."""
+    title = _article_title(article)
+    sections = _article_sections(article)
+    summary = next((x['summary'] for x in sections if x.get('summary')), '')
+    if not summary:
+        summary = '商品の特徴や利用前に確認したいポイントをまとめました。'
+    return f'{title}\n{summary[:110]}\n詳しくは記事でご確認ください。'
+
+
+def _fallback_video_points(article):
+    """Create distinct content scenes using only article headings and excerpts."""
+    sections = _article_sections(article)
+    result = []
+    for section in sections:
+        heading = _plain_text(section.get('heading'), 30)
+        summary = _plain_text(section.get('summary'), 45)
+        if not heading or not summary:
+            continue
+        result.append({
+            'scene_type': 'content', 'caption': heading,
+            'narration': summary,
+            'visual': f'記事の「{heading}」を表す具体的な生活場面。記事にない事実を描かない。',
+        })
+    return result
 
 
 def _ensure_link(value, url):
@@ -176,16 +203,39 @@ def _ensure_video_scenes(item, media_key, article, promotion_context='アフィ�
     else:
         scenes.append({'scene_type': 'affiliate_cta', 'caption': caption, 'narration': narration,
                        'visual': '明るく自然な商品案内。人物と文字の領域を分離'})
-    # Keep all key points, but constrain length and scene count for predictable timing.
-    middle = scenes[1:-1][:6]
-    if not middle:
-        middle = [{'scene_type': 'content', 'caption': '記事のポイント',
-                   'narration': '商品の特徴や注意点を記事で確認できます。',
-                   'visual': '記事の要点を示す生活場面'}]
-    scenes = [scenes[0]] + middle + [scenes[-1]]
+
+    # Six content scenes + 4-second cover + 4-second CTA = 42 seconds.
+    # Existing Gemini scenes are retained; only missing points are supplemented
+    # from the actual article. Never repeat a scene just to fill the time.
+    middle = scenes[1:-1]
+    middle = [x for x in middle if x.get('scene_type') != 'affiliate_cta']
+    article_points = _fallback_video_points(article)
+    seen = set()
+    selected = []
+    for scene in middle + article_points:
+        heading = _plain_text(scene.get('caption'), 40)
+        body = _plain_text(scene.get('narration'), 45)
+        if not heading and not body:
+            continue
+        fingerprint = (heading + ' ' + body).strip()
+        if fingerprint in seen:
+            continue
+        seen.add(fingerprint)
+        selected.append(scene)
+        if len(selected) == 6:
+            break
+    if not selected:
+        selected = [{'scene_type': 'content', 'caption': '記事のポイント',
+                     'narration': '商品の特徴や注意点を記事で確認できます。',
+                     'visual': '記事の要点を示す生活場面'}]
+    # If the source article has fewer than six distinct points, keep fewer
+    # scenes rather than fabricate claims; their durations may be longer.
+    scenes = [scenes[0]] + selected + [scenes[-1]]
     for scene in scenes:
         scene['narration'] = _plain_text(scene.get('narration'), 45)
         scene['caption'] = _plain_text(scene.get('caption'), 40)
+        if scene not in (scenes[0], scenes[-1]):
+            scene['scene_type'] = 'content'
     item['scenes'] = scenes
     _fix_video_timing(item)
     return item
@@ -328,7 +378,10 @@ def _normalize_social_plan(data, article, promotion_context='アフィリエイ�
     data['x_image'] = _as_dict(data.get('x_image'))
     for key in ('threads', 'facebook', 'line'):
         item = _as_dict(data.get(key))
-        item['text'] = _mark_text(_ensure_link(item.get('text'), affiliate_url), promotion_context)
+        base_text = item.get('text')
+        if key == 'line' and not re.sub(r'(?:【PR】|【商品案内】|https?://\S+|\s)+', '', str(base_text or '')):
+            base_text = _fallback_line(article)
+        item['text'] = _mark_text(_ensure_link(base_text, affiliate_url), promotion_context)
         data[key] = item
     carousel = _as_dict(data.get('carousel'), 'caption')
     carousel['caption'] = _mark_text(carousel.get('caption'), promotion_context)
@@ -366,6 +419,8 @@ def _validate_social_plan(data):
         raise ValueError('SNS構成の不足項目：' + ', '.join(missing))
     if len(_as_dict(data['carousel']).get('slides', [])) != 9:
         raise ValueError('Instagramカルーセルが9枚ではありません。')
+    if not re.sub(r'(?:【PR】|【商品案内】|https?://\S+|\s)+', '', str(data.get('line', {}).get('text', ''))):
+        raise ValueError('LINE配信文に本文がありません。')
     prompts = data['creative_prompts']
     required_prompts = set(MEDIA_FILENAMES) | {'instagram_carousel', 'article_section_images'}
     if required_prompts - set(prompts):
