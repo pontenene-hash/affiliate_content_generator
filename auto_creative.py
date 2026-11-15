@@ -1,4 +1,3 @@
-
 """Generate reusable creative briefs from the actual saved affiliate article."""
 
 import json
@@ -24,7 +23,6 @@ HEALTH_SAFETY = (
 def _gemini_call(client, model, prompt, max_tokens, **kwargs):
     """Retry temporary Gemini API failures without changing the request."""
     max_attempts = 5
-
     for attempt in range(max_attempts):
         try:
             response = client.models.generate_content(
@@ -33,59 +31,33 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
                 config=types.GenerateContentConfig(
                     max_output_tokens=max_tokens,
                     temperature=kwargs.get('temperature', 0.35),
-                    response_mime_type=kwargs.get('response_mime_type')
-                )
+                    response_mime_type=kwargs.get('response_mime_type'),
+                ),
             )
-
             if not response.text:
                 raise ValueError('Gemini returned an empty creative plan')
-
             return response.text
-
         except Exception as exc:
             message = str(exc).lower()
-
-            retryable = any(
-                marker in message
-                for marker in (
-                    '503',
-                    '429',
-                    'unavailable',
-                    'resource_exhausted',
-                    'deadline_exceeded',
-                    'timed out',
-                    'timeout',
-                    'connection reset'
-                )
-            )
-
+            retryable = any(marker in message for marker in (
+                '503', '429', 'unavailable', 'resource_exhausted',
+                'deadline_exceeded', 'timed out', 'timeout', 'connection reset',
+            ))
             if not retryable or attempt == max_attempts - 1:
                 raise
-
-            wait_seconds = min(
-                60,
-                5 * (2 ** attempt)
-            ) + random.uniform(0, 2)
-
+            wait_seconds = min(60, 5 * (2 ** attempt)) + random.uniform(0, 2)
             print(
-                f'Gemini一時エラー。'
-                f'{attempt + 1}/{max_attempts}回目失敗。'
+                f'Gemini一時エラー。{attempt + 1}/{max_attempts}回目失敗。'
                 f'{wait_seconds:.1f}秒後に再試行します。',
-                flush=True
+                flush=True,
             )
-
             time.sleep(wait_seconds)
 
 
 def _blog_prompts(article, title, product):
     heads = re.findall(r'^#{2,3}\s+(.+)$', article, re.M)
-
-    subjects = [title] + (
-        heads[:3] + ['商品の特徴', '選び方', '注意点']
-    )[:3]
-
+    subjects = [title] + (heads[:3] + ['商品の特徴', '選び方', '注意点'])[:3]
     items = []
-
     for i, subject in enumerate(subjects):
         items.append({
             'filename': f'blog_{i:02d}.png',
@@ -102,72 +74,68 @@ def _blog_prompts(article, title, product):
                 '商品現物の再現は、正規の参考写真がない場合は行わない。'
                 '文字なし、透かしなし、実在企業ロゴなし。'
                 + HEALTH_SAFETY
-            )
+            ),
         })
-
     return items
 
 
 def _clean_article_snippet(article, title, max_chars=145):
-    """Create a readable GBP excerpt without duplicated PR/title lines."""
+    """Extract a complete, readable GBP excerpt without cutting a sentence."""
+    fallback = '商品の特徴や利用前に確認したいポイントを記事で紹介しています。'
+    if max_chars <= 0:
+        return ''
 
-    lines = article.splitlines()
     cleaned = []
-
-    for line in lines:
-        line = line.strip()
-
+    for raw_line in article.splitlines():
+        line = raw_line.strip()
         if not line:
             continue
-
-        line = re.sub(r'^#{1,6}\s*', '', line)
-        line = re.sub(r'!\[([^\]]*)\]\([^)]+\)', r'\1', line)
+        # Markdown heading lines are labels, not sentences for GBP excerpts.
+        if re.match(r'^#{1,6}\s+', line):
+            continue
+        # Remove image-only lines and ordinary Markdown formatting.
+        line = re.sub(r'!\[[^\]]*\]\([^)]+\)', '', line)
         line = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', line)
-        line = re.sub(r'[*`>_]', '', line)
         line = re.sub(r'<[^>]+>', '', line)
+        line = re.sub(r'^[\s>*_`\-]+', '', line)
+        line = re.sub(r'[*`_]', '', line)
         line = re.sub(r'\s+', ' ', line).strip()
-
-        if not line:
+        if not line or line == title:
             continue
-
-        if line == title:
+        if re.match(r'^(?:※\s*)?(?:本記事には|この記事には).*アフィリエイト広告', line):
             continue
-
-        if re.match(
-            r'^(?:※\s*)?(?:本記事には|この記事には).*'
-            r'アフィリエイト広告',
-            line
-        ):
+        if re.match(r'^(?:【PR】|PR\s*[:：]|広告\s*[:：])', line, re.I):
             continue
-
-        if re.match(
-            r'^(?:【PR】|PR\s*[:：]|広告\s*[:：])',
-            line,
-            re.I
-        ):
-            continue
-
         if len(line) < 25:
             continue
-
         cleaned.append(line)
-
-        if len(' '.join(cleaned)) >= max_chars:
+        if len(' '.join(cleaned)) >= max_chars + 100:
             break
 
-    snippet = re.sub(r'\s+', ' ', ' '.join(cleaned)).strip()
+    source = re.sub(r'\s+', ' ', ' '.join(cleaned)).strip()
+    if not source:
+        return fallback if len(fallback) <= max_chars else ''
 
-    if not snippet:
-        return '商品の特徴や利用前に確認したいポイントを記事で紹介しています。'
+    # Never append a full stop to a substring cut in the middle of a sentence.
+    # Pick complete sentences only; skip overly long sentences instead of
+    # inventing a grammatical ending.
+    sentences = re.findall(r'[^。！？!?]+[。！？!?]', source)
+    result = ''
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(result) + len(sentence) > max_chars:
+            break
+        result += sentence
+    if result:
+        return result
 
-    snippet = snippet[:max_chars].rstrip('、。・ ')
-
-    return snippet + '。'
+    # Some articles have no short complete sentence in the introduction.
+    # Use a neutral, non-factual fallback rather than a misleading fragment.
+    return fallback if len(fallback) <= max_chars else ''
 
 
 def _gbp_video_prompt(title, product):
     """Produce a timed 45-second GBP video brief."""
-
     return (
         'Googleビジネスプロフィール用の縦型9:16動画。'
         '総尺45秒。ナレーションなし。'
@@ -175,7 +143,6 @@ def _gbp_video_prompt(title, product):
         '重要な文字は画面中央の安全領域に配置する。'
         '最初から最後まで広告であることが分かるようPR表示を入れる。'
         f'商品名：{product}。テーマ：{title}。\n\n'
-
         '【シーン構成】\n'
         '0〜5秒：読者の疑問を紹介する導入（5秒）。\n'
         '5〜13秒：商品・サービスの概要（8秒）。\n'
@@ -183,7 +150,6 @@ def _gbp_video_prompt(title, product):
         '23〜33秒：利用前の注意点・確認事項（10秒）。\n'
         '33〜40秒：記事で詳しく解説している内容を紹介（7秒）。\n'
         '40〜45秒：ブログ記事への案内・CTA（5秒）。\n\n'
-
         '【制作上の注意】\n'
         '上記の各シーンの秒数を守り、合計45秒にする。'
         '字幕は読みやすい長さにする。'
@@ -193,17 +159,8 @@ def _gbp_video_prompt(title, product):
     )
 
 
-def build_bundle(
-    article,
-    title,
-    product,
-    post_id,
-    affiliate_url,
-    api_key,
-    model
-):
+def build_bundle(article, title, product, post_id, affiliate_url, api_key, model):
     client = genai.Client(api_key=api_key)
-
     plan = generate_social_plan(
         client,
         model,
@@ -212,15 +169,11 @@ def build_bundle(
         affiliate_url=affiliate_url,
         promotion_context=(
             'アフィリエイト販売。記事への誘導を基本とする。'
-            '広告表示を明確にする。'
-            + HEALTH_SAFETY
-        )
+            '広告表示を明確にする。' + HEALTH_SAFETY
+        ),
     )
-
     blog = _blog_prompts(article, title, product)
-
     snippet = _clean_article_snippet(article, title)
-
     gbp = {
         'post': (
             f'【PR】{title}\n\n'
@@ -234,9 +187,8 @@ def build_bundle(
             '事実にない商品効果や口コミを描かない。'
             + HEALTH_SAFETY
         ),
-        'video_prompt': _gbp_video_prompt(title, product)
+        'video_prompt': _gbp_video_prompt(title, product),
     }
-
     return {
         'post_id': post_id,
         'title': title,
@@ -244,52 +196,37 @@ def build_bundle(
         'affiliate_url': affiliate_url,
         'blog_images': blog,
         'social_plan': plan,
-        'gbp': gbp
+        'gbp': gbp,
     }
 
 
 def save_bundle(bundle, root='creative_outputs'):
     dest = Path(root) / f"post_{bundle['post_id']}"
     dest.mkdir(parents=True, exist_ok=True)
-
     (dest / 'all_prompts.json').write_text(
-        json.dumps(bundle, ensure_ascii=False, indent=2),
-        encoding='utf-8'
+        json.dumps(bundle, ensure_ascii=False, indent=2), encoding='utf-8'
     )
-
     blog = '\n\n'.join(
         f"## {x['purpose']} — {x['suggested_section']}\n"
-        f"ファイル名：{x['filename']}\n"
-        f"{x['prompt']}"
+        f"ファイル名：{x['filename']}\n{x['prompt']}"
         for x in bundle['blog_images']
     )
-
     (dest / 'blog_images.md').write_text(
-        '# ブログ画像4枚分のChatGPT用プロンプト\n\n'
-        + blog + '\n',
-        encoding='utf-8'
+        '# ブログ画像4枚分のChatGPT用プロンプト\n\n' + blog + '\n',
+        encoding='utf-8',
     )
-
     (dest / 'social_posts.md').write_text(
-        social_text(bundle['social_plan']) + '\n',
-        encoding='utf-8'
+        social_text(bundle['social_plan']) + '\n', encoding='utf-8'
     )
-
     (dest / 'social_image_video_prompts.md').write_text(
-        creative_prompt_text(bundle['social_plan']) + '\n',
-        encoding='utf-8'
+        creative_prompt_text(bundle['social_plan']) + '\n', encoding='utf-8'
     )
-
     (dest / 'gbp.md').write_text(
         '# GBP投稿・画像・動画\n\n'
-        + '\n\n'.join(
-            f'## {k}\n{v}'
-            for k, v in bundle['gbp'].items()
-        )
+        + '\n\n'.join(f'## {k}\n{v}' for k, v in bundle['gbp'].items())
         + '\n',
-        encoding='utf-8'
+        encoding='utf-8',
     )
-
     (dest / 'README.md').write_text(
         f"# {bundle['title']}\n"
         f"WordPress記事ID：{bundle['post_id']}\n\n"
@@ -297,7 +234,6 @@ def save_bundle(bundle, root='creative_outputs'):
         'ChatGPTで画像を作成し、WordPressへ手動でアップロードしてください。\n'
         '各SNSでの広告表示・投稿先の規約・'
         '記事の事実確認を行ってください。\n',
-        encoding='utf-8'
+        encoding='utf-8',
     )
-
     return dest
