@@ -1,3 +1,4 @@
+
 name: Affiliate Auto Generator
 
 on:
@@ -89,24 +90,91 @@ jobs:
           import subprocess
           import sys
           import tempfile
+
           source = pathlib.Path('social_tools.py')
           patch = pathlib.Path('social_tools_safe_patch.py')
+
           if not source.is_file() or not patch.is_file():
-              raise SystemExit('Required social_tools.py or social_tools_safe_patch.py is missing')
+              raise SystemExit(
+                  'Required social_tools.py or social_tools_safe_patch.py is missing'
+              )
+
           original = source.read_text(encoding='utf-8')
-          original_names = [n.name for n in ast.parse(original).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+
+          def function_names(code):
+              return [
+                  node.name
+                  for node in ast.parse(code).body
+                  if isinstance(
+                      node,
+                      (ast.FunctionDef, ast.AsyncFunctionDef)
+                  )
+              ]
+
+          original_names = function_names(original)
+
           with tempfile.TemporaryDirectory() as folder:
               target = pathlib.Path(folder) / 'social_tools.py'
               target.write_text(original, encoding='utf-8')
-              subprocess.run([sys.executable, str(patch.resolve()), str(target)], check=True)
+
+              subprocess.run(
+                  [
+                      sys.executable,
+                      str(patch.resolve()),
+                      str(target)
+                  ],
+                  check=True
+              )
+
               updated = target.read_text(encoding='utf-8')
-              updated_names = [n.name for n in ast.parse(updated).body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
-              if original_names != updated_names:
-                  raise SystemExit('Function inventory changed; refusing patch')
-              if not (target.with_suffix('.py.bak').read_text(encoding='utf-8') == original):
-                  raise SystemExit('Backup differs from original')
+              updated_names = function_names(updated)
+
+              # Preserve every existing function in its original order.
+              # Permit only the explicitly approved helper function.
+              approved_new_functions = {'_strip_affiliate_link'}
+
+              if len(updated_names) != len(set(updated_names)):
+                  raise SystemExit(
+                      'Duplicate function names detected; refusing patch'
+                  )
+
+              unexpected = [
+                  name
+                  for name in updated_names
+                  if name not in original_names
+                  and name not in approved_new_functions
+              ]
+
+              if unexpected:
+                  raise SystemExit(
+                      'Unexpected new functions: ' + ', '.join(unexpected)
+                  )
+
+              preserved_order = [
+                  name
+                  for name in updated_names
+                  if name in original_names
+              ]
+
+              if preserved_order != original_names:
+                  raise SystemExit(
+                      'Existing functions removed or reordered; refusing patch'
+                  )
+
+              backup = target.with_suffix('.py.bak')
+
+              if updated != original:
+                  if not backup.is_file():
+                      raise SystemExit('Backup file is missing')
+                  if backup.read_text(encoding='utf-8') != original:
+                      raise SystemExit('Backup differs from original')
+
               compile(updated, str(target), 'exec')
-              print('Safe patch dry validation passed. All function names preserved.')
+
+              print('Safe patch dry validation passed.')
+              print('All existing function names preserved.')
+              print('Only approved helper functions may be added.')
+              print('Python syntax valid.')
           PY
 
       - name: Apply safe patch and commit to feature branch
@@ -115,19 +183,24 @@ jobs:
           GH_REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+
           if [ "$GH_REF_NAME" != 'feature-affiliate-sns' ]; then
             echo 'Patch can only be committed on feature-affiliate-sns' >&2
             exit 1
           fi
+
           python social_tools_safe_patch.py social_tools.py
           python -m py_compile social_tools.py
+
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
           git add -- social_tools.py
+
           if git diff --cached --quiet; then
             echo 'No changes to commit.'
           else
-            git commit -m 'Safely normalize SNS disclosures and video scenes'
+            git commit -m 'Safely normalize affiliate SNS links'
             git push origin "HEAD:${GH_REF_NAME}"
           fi
 
@@ -156,7 +229,10 @@ jobs:
           from product_registry import read_items
           items = read_items()
           print('Registered products:', len(items))
-          print('Enabled products:', sum(bool(x.get('enabled', True)) for x in items))
+          print(
+              'Enabled products:',
+              sum(bool(x.get('enabled', True)) for x in items)
+          )
           PY
 
       - name: Test Gemini connection
@@ -168,7 +244,10 @@ jobs:
           from auto_pipeline import llm, gemini_model
           model = gemini_model()
           print('Testing Gemini model:', model, flush=True)
-          result = llm('接続確認です。「接続成功」とだけ日本語で回答してください。', max_tokens=100)
+          result = llm(
+              '接続確認です。「接続成功」とだけ日本語で回答してください。',
+              max_tokens=100
+          )
           print('Gemini response:', result, flush=True)
           print('Gemini connection test passed.', flush=True)
           PY
@@ -190,10 +269,25 @@ jobs:
           import os
           import re
           import subprocess
-          post_id = os.environ.get('EXISTING_POST_ID', '').strip()
+
+          post_id = os.environ.get(
+              'EXISTING_POST_ID', ''
+          ).strip()
+
           if not re.fullmatch(r'[1-9][0-9]*', post_id):
-              raise SystemExit('A positive numeric WordPress post ID is required')
-          subprocess.run(['python', 'retry_creative.py', '--post-id', post_id], check=True)
+              raise SystemExit(
+                  'A positive numeric WordPress post ID is required'
+              )
+
+          subprocess.run(
+              [
+                  'python',
+                  'retry_creative.py',
+                  '--post-id',
+                  post_id
+              ],
+              check=True
+          )
           PY
 
       - name: Generate affiliate drafts and creative prompts
@@ -215,23 +309,81 @@ jobs:
           import os
           import sys
           from auto_pipeline import run_batch
-          dry_run = os.environ.get('DRY_RUN', 'false').lower() == 'true'
-          event_name = os.environ.get('GITHUB_EVENT_NAME', '')
-          limit = 1 if event_name == 'workflow_dispatch' else 5
+
+          dry_run = (
+              os.environ.get('DRY_RUN', 'false').lower()
+              == 'true'
+          )
+
+          event_name = os.environ.get(
+              'GITHUB_EVENT_NAME', ''
+          )
+
+          limit = (
+              1 if event_name == 'workflow_dispatch'
+              else 5
+          )
+
           print('GitHub event:', event_name, flush=True)
           print('Dry run:', dry_run, flush=True)
           print('Article limit:', limit, flush=True)
-          result = run_batch(limit=limit, dry_run=dry_run)
-          print(json.dumps(result, ensure_ascii=False, indent=2), flush=True)
-          with open('affiliate_run_report.json', 'w', encoding='utf-8') as f:
-              json.dump(result, f, ensure_ascii=False, indent=2)
-          errors = [item for item in result.get('results', []) if (item.get('status') in ('error', 'manual_link_required') or str(item.get('creative', '')).startswith('error:'))]
+
+          result = run_batch(
+              limit=limit,
+              dry_run=dry_run
+          )
+
+          print(
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              flush=True
+          )
+
+          with open(
+              'affiliate_run_report.json',
+              'w',
+              encoding='utf-8'
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          errors = [
+              item
+              for item in result.get('results', [])
+              if (
+                  item.get('status')
+                  in ('error', 'manual_link_required')
+                  or str(
+                      item.get('creative', '')
+                  ).startswith('error:')
+              )
+          ]
+
           if errors:
-              print('ERROR: Article or creative generation failed.', file=sys.stderr)
+              print(
+                  'ERROR: Article or creative generation failed.',
+                  file=sys.stderr
+              )
               sys.exit(1)
-          print('Completed articles:', result.get('processed', 0), flush=True)
+
+          print(
+              'Completed articles:',
+              result.get('processed', 0),
+              flush=True
+          )
+
           if dry_run:
-              print('Test completed. No WordPress draft was created.', flush=True)
+              print(
+                  'Test completed. No WordPress draft was created.',
+                  flush=True
+              )
           PY
 
       - name: Upload run report
