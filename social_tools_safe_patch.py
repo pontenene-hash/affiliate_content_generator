@@ -1,119 +1,268 @@
-"""Idempotent, AST-checked URL cleanup patch for social_tools.py.
 
-Upload this file to the repository root as social_tools_safe_patch.py,
-then run the existing safe_patch_check + apply_safe_patch GitHub workflow.
-Only two existing functions are modified. A .bak backup is created.
+"""Safely improve SNS copy, image prompts, and video scenes.
+
+Usage:
+    python social_tools_safe_patch.py social_tools.py
+
+- Creates a .bak backup before modifying the target.
+- Preserves all existing top-level functions.
+- Validates syntax and performs a second-run idempotence check.
+- Does not modify WordPress, article generation, or schedules.
 """
+
 import ast
-from pathlib import Path
+import re
 import sys
+from pathlib import Path
 
-NEW_ENSURE_LINK = '''def _ensure_link(value, url):
-    """Output one complete affiliate URL; remove broken/duplicate versions."""
-    value = str(value or '').strip()
-    url = str(url or '').strip()
-    if not url:
-        return value
-    # A Gemini response can split a query string after '?' or '&'.
-    # Match only the supplied affiliate URL, with optional whitespace at
-    # those boundaries, rather than deleting unrelated external links.
-    pieces = re.split(r'([?&=])', url)
-    flexible = ''.join(r'\\s*' + re.escape(p) + r'\\s*' if p in '?&=' else re.escape(p)
-                       for p in pieces if p)
-    value = re.sub(flexible, '', value, flags=re.I)
-    # Also strip a partial link emitted on a separate line, such as
-    # https://px.a8.net/svt/ejp? followed by a8mat=... on the next line.
-    base = url.split('?', 1)[0]
-    if base:
-        value = re.sub(re.escape(base) + r'\\s*\\?\\s*(?:\\n|$)', '', value, flags=re.I)
-    # Remove a stray query line only if it exactly matches the known query.
-    if '?' in url:
-        query = url.split('?', 1)[1]
-        value = re.sub(r'(?m)^\\s*' + re.escape(query) + r'\\s*$', '', value)
-    value = re.sub(r'\\n{3,}', '\\n\\n', value).strip()
-    return value + '\\n' + url
-'''
 
-NEW_STRIP_LINK = '''def _strip_affiliate_link(value, url):
-    """Remove the supplied affiliate URL from profile-link-only platforms."""
-    value = str(value or '').strip()
-    url = str(url or '').strip()
-    if not url:
-        return value
-    pieces = re.split(r'([?&=])', url)
-    flexible = ''.join(r'\\s*' + re.escape(p) + r'\\s*' if p in '?&=' else re.escape(p)
-                       for p in pieces if p)
-    value = re.sub(flexible, '', value, flags=re.I)
-    base = url.split('?', 1)[0]
-    if base:
-        value = re.sub(re.escape(base) + r'\\s*\\?\\s*(?:\\n|$)', '', value, flags=re.I)
-    if '?' in url:
-        query = url.split('?', 1)[1]
-        value = re.sub(r'(?m)^\\s*' + re.escape(query) + r'\\s*$', '', value)
-    return re.sub(r'\\n{3,}', '\\n\\n', value).strip()
-'''
-
-# Inserted immediately before building creative prompts, preserving all
-# existing normalization and all creative/image/video generation functions.
-EXTRA_NORMALIZATION = '''    # Profile-only platforms: do not print raw affiliate links in captions.
-    carousel['caption'] = _mark_text(_strip_affiliate_link(carousel.get('caption'), affiliate_url), promotion_context)
-    for media_key in ('reel', 'tiktok'):
-        media = _as_dict(data.get(media_key), 'caption')
-        media['caption'] = _mark_text(_strip_affiliate_link(media.get('caption'), affiliate_url), promotion_context)
-        data[media_key] = media
-'''
+PATCH_MARKER = "# SAFE_SOCIAL_QUALITY_PATCH_V3"
 
 
 def function_names(source):
-    return [node.name for node in ast.parse(source).body
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+    return [
+        node.name
+        for node in ast.parse(source).body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ]
 
 
 def replace_function(source, name, replacement):
     tree = ast.parse(source)
-    matches = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == name]
+    matches = [
+        node for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
     if len(matches) != 1:
-        raise ValueError(f'Expected one function {name}, found {len(matches)}')
+        raise ValueError(
+            f"Expected exactly one function {name}; found {len(matches)}"
+        )
     node = matches[0]
     lines = source.splitlines(keepends=True)
-    return ''.join(lines[:node.lineno - 1]) + replacement.rstrip() + '\n' + ''.join(lines[node.end_lineno:])
+    lines[node.lineno - 1:node.end_lineno] = [
+        replacement.rstrip() + "\n"
+    ]
+    return "".join(lines)
 
 
-def main(path):
-    target = Path(path)
-    original = target.read_text(encoding='utf-8')
-    before = function_names(original)
-    updated = replace_function(original, '_ensure_link', NEW_ENSURE_LINK)
-    if 'def _strip_affiliate_link(' not in updated:
-        anchor = 'def _ensure_link('
-        updated = updated.replace(anchor, NEW_STRIP_LINK + '\n\n' + anchor, 1)
-    # Locate the end of _normalize_social_plan using AST, not an ambiguous
-    # global text replacement. Do not insert twice on subsequent runs.
+NEW_REVIEW_SAFE_COPY = '''
+def _review_safe_copy(value):
+    """Remove unsupported claims without leaving broken fragments."""
+    text = str(value or '')
+    parts = re.split(r'(?<=[。！？!?])|\\\\n', text)
+    result = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if _REVIEW_CLAIM.search(part):
+            continue
+        result.append(part)
+    return '\\\\n'.join(result).strip()
+'''
+
+
+NEW_FALLBACK_LINE = '''
+def _fallback_line(article):
+    """Create a neutral, complete LINE message."""
+    title = _article_title(article)
+    return (
+        f'{title}について、商品の特徴や利用前に'
+        '確認したいポイントを記事にまとめました。'
+        '\\\\n詳しくは記事でご確認ください。'
+    )
+'''
+
+
+NEW_ENSURE_VIDEO = '''
+def _ensure_video_scenes(
+    item, media_key, article,
+    promotion_context='アフィリエイト販売'
+):
+    """Build 42-second scenes with one opening and one final CTA."""
+    scenes = [
+        _as_dict(scene, 'narration')
+        for scene in _as_list(item.get('scenes'))
+    ]
+    title = _plain_text(
+        item.get('title') or _article_title(article), 28
+    )
+    opening = {
+        'scene_type': 'opening_cover',
+        'caption': title,
+        'narration': title,
+        'visual': '明るい表紙。文字と人物を分離する。'
+    }
+
+    if _store_only(promotion_context):
+        caption = '院内でご相談ください'
+        narration = 'ご来店時にスタッフへお気軽にご相談ください。'
+    elif media_key == 'youtube':
+        caption = '概要欄から詳しく確認'
+        narration = '詳しくは概要欄のリンクをご確認ください。'
+    else:
+        caption = '詳しくはプロフィールへ'
+        narration = '詳しくはプロフィールのリンクをご確認ください。'
+
+    cta = {
+        'scene_type': 'affiliate_cta',
+        'caption': caption,
+        'narration': narration,
+        'visual': '自然な商品案内。文字の安全余白を確保する。'
+    }
+
+    candidates = [
+        scene for scene in scenes
+        if scene.get('scene_type') not in (
+            'opening_cover', 'affiliate_cta'
+        )
+    ]
+    candidates += _fallback_video_points(article)
+
+    selected = []
+    seen = set()
+    for scene in candidates:
+        heading = _review_safe_copy(
+            _plain_text(scene.get('caption'), 40)
+        )
+        body = _review_safe_copy(
+            _plain_text(scene.get('narration'), 45)
+        )
+        if not heading or not body:
+            continue
+        key = re.sub(r'[\\\\W_]+', '', heading).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        selected.append({
+            'scene_type': 'content',
+            'caption': heading,
+            'narration': body,
+            'visual': _review_safe_copy(
+                scene.get('visual')
+            ) or '記事に沿った明るい生活場面'
+        })
+        if len(selected) == 6:
+            break
+
+    if not selected:
+        selected.append({
+            'scene_type': 'content',
+            'caption': '記事のポイント',
+            'narration': '商品の特徴や注意点を記事でご確認ください。',
+            'visual': '記事の内容を表す明るい生活場面'
+        })
+
+    item['scenes'] = [opening] + selected + [cta]
+    _fix_video_timing(item)
+    return item
+'''
+
+
+NEW_BUILD_CREATIVE = '''
+def _build_creative_prompts(plan, article):
+    """Preserve the original creative builder and sanitize its output."""
+    prompts = _build_creative_prompts_original(plan, article)
+
+    def clean_item(item):
+        if isinstance(item, list):
+            return [clean_item(x) for x in item]
+        if not isinstance(item, dict):
+            return item
+        result = dict(item)
+        for key in (
+            'catch_copy', 'sub_copy', 'body_text',
+            'heading', 'prompt'
+        ):
+            if key in result:
+                result[key] = _review_safe_copy(result[key])
+        return result
+
+    return {key: clean_item(value) for key, value in prompts.items()}
+'''
+
+
+def patch(source):
+    if PATCH_MARKER in source:
+        return source
+
+    before = function_names(source)
+    updated = source
+
+    updated = replace_function(
+        updated, "_review_safe_copy", NEW_REVIEW_SAFE_COPY
+    )
+    updated = replace_function(
+        updated, "_fallback_line", NEW_FALLBACK_LINE
+    )
+    updated = replace_function(
+        updated, "_ensure_video_scenes", NEW_ENSURE_VIDEO
+    )
+
+    # Preserve the complete existing image/video builder.
     tree = ast.parse(updated)
-    normalize = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
-                     and node.name == '_normalize_social_plan')
+    matches = [
+        n for n in tree.body
+        if isinstance(n, ast.FunctionDef)
+        and n.name == "_build_creative_prompts"
+    ]
+    if len(matches) != 1:
+        raise ValueError("Creative builder not found")
+
+    node = matches[0]
     lines = updated.splitlines(keepends=True)
-    start, end = normalize.lineno - 1, normalize.end_lineno
-    block = ''.join(lines[start:end])
-    if '# Profile-only platforms: do not print raw affiliate links' not in block:
-        needle = "    data['creative_prompts'] = _build_creative_prompts(data, article)"
-        if block.count(needle) != 1:
-            raise ValueError('Cannot find unique creative prompt assignment; refusing to patch')
-        block = block.replace(needle, EXTRA_NORMALIZATION + needle)
-        updated = ''.join(lines[:start]) + block + ''.join(lines[end:])
-    ast.parse(updated)
+    original_block = "".join(
+        lines[node.lineno - 1:node.end_lineno]
+    )
+
+    renamed = original_block.replace(
+        "def _build_creative_prompts(",
+        "def _build_creative_prompts_original(",
+        1
+    )
+    replacement = renamed.rstrip() + "\n\n" + NEW_BUILD_CREATIVE.strip() + "\n"
+    lines[node.lineno - 1:node.end_lineno] = [replacement]
+    updated = "".join(lines)
+
+    updated = PATCH_MARKER + "\n" + updated
+    compile(updated, "<patched social_tools>", "exec")
+
     after = function_names(updated)
-    if after != before[:before.index('_ensure_link')] + ['_strip_affiliate_link'] + before[before.index('_ensure_link'):] and after != before:
-        raise ValueError('Unexpected change in existing function inventory')
+    expected = before + ["_build_creative_prompts_original"]
+    if sorted(after) != sorted(expected):
+        raise ValueError("Unexpected function inventory change")
+
+    return updated
+
+
+def main():
+    target = Path(
+        sys.argv[1] if len(sys.argv) > 1 else "social_tools.py"
+    )
+    original = target.read_text(encoding="utf-8")
+    updated = patch(original)
+
     if updated == original:
-        print('No changes to commit. URL cleanup is already installed.')
+        print("Already patched. No changes required.")
         return
-    backup = target.with_suffix(target.suffix + '.bak')
-    backup.write_text(original, encoding='utf-8')
-    target.write_text(updated, encoding='utf-8')
-    print(f'Patched: {target}; backup: {backup}')
-    print('All existing function names preserved. Python AST syntax valid.')
+
+    # Verify that running the patch twice changes nothing.
+    if patch(updated) != updated:
+        raise ValueError("Idempotence check failed")
+
+    backup = target.with_suffix(target.suffix + ".bak")
+    if backup.exists():
+        raise SystemExit(
+            f"Backup already exists: {backup}. No files changed."
+        )
+
+    backup.write_text(original, encoding="utf-8")
+    target.write_text(updated, encoding="utf-8")
+
+    print(f"Patched: {target}")
+    print(f"Backup: {backup}")
+    print("Syntax and function inventory checks passed.")
 
 
-if __name__ == '__main__':
-    main(sys.argv[1] if len(sys.argv) > 1 else 'social_tools.py')
+if __name__ == "__main__":
+    main()
