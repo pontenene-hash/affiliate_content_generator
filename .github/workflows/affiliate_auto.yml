@@ -130,8 +130,11 @@ jobs:
               updated_names = function_names(updated)
 
               # Preserve every existing function in its original order.
-              # Permit only the explicitly approved helper function.
-              approved_new_functions = {'_strip_affiliate_link'}
+              # Permit only the explicitly approved helper functions.
+              approved_new_functions = {
+                  '_strip_affiliate_link',
+                  '_build_creative_prompts_original',
+              }
 
               if len(updated_names) != len(set(updated_names)):
                   raise SystemExit(
