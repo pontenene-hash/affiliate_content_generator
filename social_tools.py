@@ -1,3 +1,4 @@
+# SAFE_SOCIAL_QUALITY_PATCH_V3
 """SNS copy and independent image/video creative briefs for saved affiliate articles."""
 import json
 import re
@@ -139,14 +140,15 @@ def _mark_text(value, context):
     return mark + ('\n' + value if value else '')
 
 
+
 def _fallback_line(article):
-    """Use article-derived wording, never invent a product claim."""
+    """Create a neutral, complete LINE message."""
     title = _article_title(article)
-    sections = _article_sections(article)
-    summary = next((x['summary'] for x in sections if x.get('summary')), '')
-    if not summary:
-        summary = '商品の特徴や利用前に確認したいポイントをまとめました。'
-    return f'{title}\n{summary[:110]}\n詳しくは記事でご確認ください。'
+    return (
+        f'{title}について、商品の特徴や利用前に'
+        '確認したいポイントを記事にまとめました。'
+        '\\n詳しくは記事でご確認ください。'
+    )
 
 
 def _fallback_video_points(article):
@@ -222,58 +224,86 @@ def _fix_video_timing(item):
     item['total_duration'] = '42秒'
 
 
-def _ensure_video_scenes(item, media_key, article, promotion_context='アフィリエイト販売'):
-    """Keep article-grounded scenes, avoid repeated points, and total 42 seconds."""
-    scenes = [_as_dict(scene, 'narration') for scene in _as_list(item.get('scenes'))]
-    title = _plain_text(item.get('title') or item.get('caption') or _article_title(article), 28)
-    if not scenes or scenes[0].get('scene_type') != 'opening_cover':
-        scenes.insert(0, {'scene_type': 'opening_cover', 'caption': title,
-                          'narration': title, 'visual': '記事のテーマが伝わる明るい表紙。人物と文字を分離'})
-    else:
-        scenes[0]['scene_type'] = 'opening_cover'
+
+def _ensure_video_scenes(
+    item, media_key, article,
+    promotion_context='アフィリエイト販売'
+):
+    """Build 42-second scenes with one opening and one final CTA."""
+    scenes = [
+        _as_dict(scene, 'narration')
+        for scene in _as_list(item.get('scenes'))
+    ]
+    title = _plain_text(
+        item.get('title') or _article_title(article), 28
+    )
+    opening = {
+        'scene_type': 'opening_cover',
+        'caption': title,
+        'narration': title,
+        'visual': '明るい表紙。文字と人物を分離する。'
+    }
 
     if _store_only(promotion_context):
-        caption, narration = '院内でご相談ください', '気になる方は、ご来店時にスタッフへお気軽にご相談ください。'
+        caption = '院内でご相談ください'
+        narration = 'ご来店時にスタッフへお気軽にご相談ください。'
     elif media_key == 'youtube':
-        caption, narration = '概要欄から詳しく確認', '気になる方は、概要欄のリンクから詳しくご確認ください。'
+        caption = '概要欄から詳しく確認'
+        narration = '詳しくは概要欄のリンクをご確認ください。'
     else:
-        caption, narration = '詳しくはプロフィールへ', '気になる方は、プロフィールのリンクから詳しくご確認ください。'
+        caption = '詳しくはプロフィールへ'
+        narration = '詳しくはプロフィールのリンクをご確認ください。'
 
-    cta = {'scene_type': 'affiliate_cta', 'caption': caption, 'narration': narration,
-           'visual': '明るく自然な商品案内。人物と文字の領域を分離'}
-    # Discard any Gemini-generated intermediate CTA; use a single final CTA.
-    middle = [scene for scene in scenes[1:] if scene.get('scene_type') != 'affiliate_cta']
-    article_points = _fallback_video_points(article)
-    seen_headings, seen_bodies = set(), set()
+    cta = {
+        'scene_type': 'affiliate_cta',
+        'caption': caption,
+        'narration': narration,
+        'visual': '自然な商品案内。文字の安全余白を確保する。'
+    }
+
+    candidates = [
+        scene for scene in scenes
+        if scene.get('scene_type') not in (
+            'opening_cover', 'affiliate_cta'
+        )
+    ]
+    candidates += _fallback_video_points(article)
+
     selected = []
-    for scene in middle + article_points:
-        heading = _plain_text(scene.get('caption'), 40)
-        body = _plain_text(scene.get('narration'), 45)
-        if not heading and not body:
+    seen = set()
+    for scene in candidates:
+        heading = _review_safe_copy(
+            _plain_text(scene.get('caption'), 40)
+        )
+        body = _review_safe_copy(
+            _plain_text(scene.get('narration'), 45)
+        )
+        if not heading or not body:
             continue
-        # Ignore identical or near-identical points after whitespace/punctuation normalization.
-        heading_key = re.sub(r'[\W_]+', '', heading).lower()
-        body_key = re.sub(r'[\W_]+', '', body).lower()
-        if (heading_key and heading_key in seen_headings) or (body_key and body_key in seen_bodies):
+        key = re.sub(r'[\\W_]+', '', heading).lower()
+        if not key or key in seen:
             continue
-        if heading_key:
-            seen_headings.add(heading_key)
-        if body_key:
-            seen_bodies.add(body_key)
-        scene = dict(scene)
-        scene.update({'scene_type': 'content', 'caption': heading, 'narration': body})
-        selected.append(scene)
+        seen.add(key)
+        selected.append({
+            'scene_type': 'content',
+            'caption': heading,
+            'narration': body,
+            'visual': _review_safe_copy(
+                scene.get('visual')
+            ) or '記事に沿った明るい生活場面'
+        })
         if len(selected) == 6:
             break
+
     if not selected:
-        selected = [{'scene_type': 'content', 'caption': '記事のポイント',
-                     'narration': '商品の特徴や注意点を記事で確認できます。',
-                     'visual': '記事の要点を示す生活場面'}]
-    scenes = [scenes[0]] + selected + [cta]
-    for scene in scenes:
-        scene['narration'] = _plain_text(scene.get('narration'), 45)
-        scene['caption'] = _plain_text(scene.get('caption'), 40)
-    item['scenes'] = scenes
+        selected.append({
+            'scene_type': 'content',
+            'caption': '記事のポイント',
+            'narration': '商品の特徴や注意点を記事でご確認ください。',
+            'visual': '記事の内容を表す明るい生活場面'
+        })
+
+    item['scenes'] = [opening] + selected + [cta]
     _fix_video_timing(item)
     return item
 
@@ -363,7 +393,7 @@ def _article_section_prompt(section, number):
     return item
 
 
-def _build_creative_prompts(plan, article):
+def _build_creative_prompts_original(plan, article):
     x = _as_dict(plan.get('x_image'))
     facebook, threads, line = (_as_dict(plan.get(k)) for k in ('facebook', 'threads', 'line'))
     reel, youtube, tiktok = (_as_dict(plan.get(k)) for k in ('reel', 'youtube', 'tiktok'))
@@ -404,6 +434,26 @@ def _build_creative_prompts(plan, article):
     }
     return apply_quality_rules(prompts)
 
+def _build_creative_prompts(plan, article):
+    """Preserve the original creative builder and sanitize its output."""
+    prompts = _build_creative_prompts_original(plan, article)
+
+    def clean_item(item):
+        if isinstance(item, list):
+            return [clean_item(x) for x in item]
+        if not isinstance(item, dict):
+            return item
+        result = dict(item)
+        for key in (
+            'catch_copy', 'sub_copy', 'body_text',
+            'heading', 'prompt'
+        ):
+            if key in result:
+                result[key] = _review_safe_copy(result[key])
+        return result
+
+    return {key: clean_item(value) for key, value in prompts.items()}
+
 
 
 # Claims requiring independent verification are excluded from generated promotional copy.
@@ -416,12 +466,20 @@ _REVIEW_CLAIM = re.compile(
     r'人間ドック(?:の代わり|に比べて))', re.I)
 
 
+
 def _review_safe_copy(value):
-    """Drop complete promotional sentences containing unverified claims."""
+    """Remove unsupported claims without leaving broken fragments."""
     text = str(value or '')
-    chunks = re.split(r'(?<=[。！？!?])|\n', text)
-    retained = [part.strip() for part in chunks if part.strip() and not _REVIEW_CLAIM.search(part)]
-    return '\n'.join(retained).strip()
+    parts = re.split(r'(?<=[。！？!?])|\\n', text)
+    result = []
+    for part in parts:
+        part = part.strip()
+        if not part:
+            continue
+        if _REVIEW_CLAIM.search(part):
+            continue
+        result.append(part)
+    return '\\n'.join(result).strip()
 
 
 def _strip_duplicate_tags(text, tags):
