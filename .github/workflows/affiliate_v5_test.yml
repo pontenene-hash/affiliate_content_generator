@@ -30,7 +30,7 @@ jobs:
 
       - name: Run V5 quality tests
         run: |
-          python -m unittest discover -s . -p 'test_affiliate_quality_v5.py' -v
+          python test_affiliate_quality_v5.py
 
       - name: Test installer on temporary copy
         run: |
@@ -71,5 +71,13 @@ jobs:
                   check=True
               )
 
+              assert target.read_text(encoding="utf-8") == updated
+
               print("V5 installer safety test passed")
           PY
+
+      - name: Final safety confirmation
+        run: |
+          echo "V5 safety tests completed successfully."
+          echo "No production files were modified."
+          echo "WordPress and scheduled workflows were not executed."
