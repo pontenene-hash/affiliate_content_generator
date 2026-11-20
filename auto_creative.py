@@ -44,9 +44,16 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
 
         except Exception as exc:
             message = str(exc).lower()
+
             retryable = any(marker in message for marker in (
-                '503', '429', 'unavailable', 'resource_exhausted',
-                'deadline_exceeded', 'timed out', 'timeout', 'connection reset',
+                '503',
+                '429',
+                'unavailable',
+                'resource_exhausted',
+                'deadline_exceeded',
+                'timed out',
+                'timeout',
+                'connection reset',
             ))
 
             if not retryable or attempt == max_attempts - 1:
@@ -65,7 +72,10 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
 
 def _blog_prompts(article, title, product):
     heads = re.findall(r'^#{2,3}\s+(.+)$', article, re.M)
-    subjects = [title] + (heads[:3] + ['商品の特徴', '選び方', '注意点'])[:3]
+
+    subjects = [title] + (
+        heads[:3] + ['商品の特徴', '選び方', '注意点']
+    )[:3]
 
     items = []
 
@@ -75,7 +85,7 @@ def _blog_prompts(article, title, product):
             'purpose': 'アイキャッチ' if i == 0 else f'本文画像{i}',
             'suggested_section': '記事冒頭' if i == 0 else subject,
             'prompt': (
-                f'日本のWebメディア向け高品質な横長16:9画像。'
+                '日本のWebメディア向け高品質な横長16:9画像。'
                 f'商品名「{product}」。テーマ「{subject}」。'
                 '読者に分かりやすい自然な日本人の生活場面、'
                 '明るい自然光、清潔感、正確な人体と手指、'
@@ -92,8 +102,12 @@ def _blog_prompts(article, title, product):
 
 
 def _clean_article_snippet(article, title, max_chars=145):
-    """Extract a complete, readable GBP excerpt without cutting a sentence."""
-    fallback = '商品の特徴や利用前に確認したいポイントを記事で紹介しています。'
+    """Extract a complete GBP excerpt without cutting a sentence."""
+
+    fallback = (
+        '商品の特徴や利用前に確認したいポイントを'
+        '記事で紹介しています。'
+    )
 
     if max_chars <= 0:
         return ''
@@ -125,7 +139,11 @@ def _clean_article_snippet(article, title, max_chars=145):
         ):
             continue
 
-        if re.match(r'^(?:【PR】|PR\s*[:：]|広告\s*[:：])', line, re.I):
+        if re.match(
+            r'^(?:【PR】|PR\s*[:：]|広告\s*[:：])',
+            line,
+            re.I,
+        ):
             continue
 
         if len(line) < 25:
@@ -142,6 +160,7 @@ def _clean_article_snippet(article, title, max_chars=145):
         return fallback if len(fallback) <= max_chars else ''
 
     sentences = re.findall(r'[^。！？!?]+[。！？!?]', source)
+
     result = ''
 
     for sentence in sentences:
@@ -160,6 +179,7 @@ def _clean_article_snippet(article, title, max_chars=145):
 
 def _gbp_video_prompt(title, product):
     """Produce a timed 45-second GBP video brief."""
+
     return (
         'Googleビジネスプロフィール用の縦型9:16動画。'
         '総尺45秒。ナレーションなし。'
@@ -183,8 +203,16 @@ def _gbp_video_prompt(title, product):
     )
 
 
-def build_bundle(article, title, product, post_id, affiliate_url, api_key, model):
-    """Generate a complete creative bundle and apply V5 quality review."""
+def build_bundle(
+    article,
+    title,
+    product,
+    post_id,
+    affiliate_url,
+    api_key,
+    model,
+):
+    """Generate creative bundle and apply V5 quality review."""
 
     client = genai.Client(api_key=api_key)
 
@@ -196,11 +224,13 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
         affiliate_url=affiliate_url,
         promotion_context=(
             'アフィリエイト販売。記事への誘導を基本とする。'
-            '広告表示を明確にする。' + HEALTH_SAFETY
+            '広告表示を明確にする。'
+            + HEALTH_SAFETY
         ),
     )
 
     blog = _blog_prompts(article, title, product)
+
     snippet = _clean_article_snippet(article, title)
 
     gbp = {
@@ -231,15 +261,21 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
 
     # AFFILIATE_QUALITY_V5_HOOK
     from affiliate_quality_v5 import review_bundle
+
     return review_bundle(bundle)
 
 
 def save_bundle(bundle, root='creative_outputs'):
     dest = Path(root) / f"post_{bundle['post_id']}"
+
     dest.mkdir(parents=True, exist_ok=True)
 
     (dest / 'all_prompts.json').write_text(
-        json.dumps(bundle, ensure_ascii=False, indent=2),
+        json.dumps(
+            bundle,
+            ensure_ascii=False,
+            indent=2,
+        ),
         encoding='utf-8',
     )
 
@@ -250,7 +286,9 @@ def save_bundle(bundle, root='creative_outputs'):
     )
 
     (dest / 'blog_images.md').write_text(
-        '# ブログ画像4枚分のChatGPT用プロンプト\n\n' + blog + '\n',
+        '# ブログ画像4枚分のChatGPT用プロンプト\n\n'
+        + blog
+        + '\n',
         encoding='utf-8',
     )
 
@@ -266,7 +304,10 @@ def save_bundle(bundle, root='creative_outputs'):
 
     (dest / 'gbp.md').write_text(
         '# GBP投稿・画像・動画\n\n'
-        + '\n\n'.join(f'## {k}\n{v}' for k, v in bundle['gbp'].items())
+        + '\n\n'.join(
+            f'## {k}\n{v}'
+            for k, v in bundle['gbp'].items()
+        )
         + '\n',
         encoding='utf-8',
     )
@@ -275,7 +316,8 @@ def save_bundle(bundle, root='creative_outputs'):
         f"# {bundle['title']}\n"
         f"WordPress記事ID：{bundle['post_id']}\n\n"
         '画像・動画はこのファイルでは生成されません。'
-        'ChatGPTで画像を作成し、WordPressへ手動でアップロードしてください。\n'
+        'ChatGPTで画像を作成し、'
+        'WordPressへ手動でアップロードしてください。\n'
         '各SNSでの広告表示・投稿先の規約・'
         '記事の事実確認を行ってください。\n',
         encoding='utf-8',
