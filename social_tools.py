@@ -1,902 +1,601 @@
+# SAFE_SOCIAL_QUALITY_PATCH_V4
+"""SNS copy and independent image/video creative briefs for saved affiliate articles."""
 import json
 import re
-
 from creative_quality import COMMON_QUALITY, apply_quality_rules
 
-
-CAROUSEL_LAYOUT = "上部見出し18％・中央イラスト57％・下部説明カード25％。3領域を完全分離し、中央イラストへ文字を重ねない"
-CAROUSEL_FONT = "太めの日本語ゴシック体。大見出し64〜80px、説明文36〜44px以上、行間1.25〜1.4倍、説明は最大4行"
-ARTICLE_IMAGE_LAYOUT = "左側30％をテキスト専用エリア、右側70％をイラスト表示エリアとして完全分離。人物・商品・重要物へ文字や帯を重ねない"
-ARTICLE_IMAGE_FONT = "太めの日本語ゴシック体。見出し56〜72px、補足30〜38px以上、行間1.25〜1.4倍、1行15〜18文字以内"
-
 MEDIA_FILENAMES = {
-    "product_promo_image": "商品紹介画像.png",
-    "store_pop_image": "店内POP_A4.png",
-    "x_image": "X_投稿画像.png",
-    "facebook_eyecatch": "Facebook_アイキャッチ.png",
-    "threads_image": "Threads_投稿画像.png",
-    "line_image": "LINE_配信用画像.png",
-    "reel_cover": "Instagram_リール表紙.png",
-    "reel_video": "Instagram_リール動画.mp4",
-    "youtube_thumbnail": "YouTube_サムネイル.png",
-    "youtube_video": "YouTube_動画.mp4",
-    "tiktok_cover": "TikTok_表紙.png",
-    "tiktok_video": "TikTok_動画.mp4",
+    'product_promo_image': '商品紹介画像.png', 'store_pop_image': '店内POP_A4.png',
+    'x_image': 'X_投稿画像.png', 'facebook_eyecatch': 'Facebook_アイキャッチ.png',
+    'threads_image': 'Threads_投稿画像.png', 'line_image': 'LINE_配信用画像.png',
+    'reel_cover': 'Instagram_リール表紙.png', 'reel_video': 'Instagram_リール動画.mp4',
+    'youtube_thumbnail': 'YouTube_サムネイル.png', 'youtube_video': 'YouTube_動画.mp4',
+    'tiktok_cover': 'TikTok_表紙.png', 'tiktok_video': 'TikTok_動画.mp4',
 }
-
-IMAGE_QUALITY = (
-    "あなたは読者心理と購買行動を熟知したプロのマーケティングコンサルタントであり、"
-    "広告・出版分野で経験豊富なプロのイラストレーターです。マーケティング視点で情報の優先順位と視線誘導を設計し、"
-    "細部まで丁寧で求心力のある高品質な商用イラストを制作する。"
-    "読者の感情が伝わる自然な表情と仕草、正確な人体、丁寧な手指、内容に合う背景と小物、柔らかな自然光、"
-    "奥行きと質感、清潔感・信頼感・親しみやすさを備えた現代的な日本の雑誌広告風。"
-    "安価な素材集風、幼すぎる絵、棒人間、平面的で単調な構図、不自然な手指、過剰な医療表現、"
-    "実在ロゴ、著名キャラクター、特定作家の画風、透かし、意味不明な文字を使用しない。"
-)
-
-BRIGHT_VISUAL_RULES = (
-    "全体は明るく魅力的なハイキー表現にし、白を基調に、コーラル、明るい黄色、空色、ミントなどを内容に合わせて調和させる。"
-    "彩度は生き生きと見える範囲に保ち、白飛びや派手すぎる原色は避ける。柔らかな日差し、透明感のある空気、"
-    "清潔な背景、自然な笑顔または前向きな表情、親しみやすく自然な動作で、見た人が内容を知りたくなる第一印象を作る。"
-    "主役がひと目で分かる焦点、前景・中景・背景の奥行き、記事内容を補う小物を丁寧に描き、上質な雑誌広告のように仕上げる。"
-    "暗い画面、灰色や茶色に偏った配色、濁った低彩度、重苦しい影、無表情、恐怖をあおる表現、"
-    "汎用素材のような笑顔の人物だけの構図、内容と無関係な装飾は禁止する。"
-)
-
-CONTENT_VISUAL_RULES = (
-    "制作前に見出し・説明・場面指定を読み、①記事で伝える要点、②その要点に関係する読者の状況、"
-    "③理解または実践後の望ましい変化を整理する。イラストは、その場面の要点が文字を読まなくても伝わるよう、"
-    "人物、表情、視線、手の動き、姿勢、場所、背景、小物を具体的に組み合わせる。単なる人物の立ち絵にしない。"
-    "記事にない効果、数値、設備、資格、人物、商品、店舗情報は描き足さない。"
-)
-
-TEXT_LAYOUT_RULES = (
-    "文字を描画する前に全文を日本語として読み、文節・語句・固有名詞・熟語の境界を確認して改行位置を確定する。"
-    "確定した各行を分割禁止の1つのテキストオブジェクトとして配置し、制作ツールによる自動折り返しを無効にする。"
-    "単語、固有名詞、商品名、施設名、熟語、数字と単位の途中では絶対に改行しない。"
-    "助詞、句読点、長音、閉じ括弧を行頭に置かず、1文字だけの行や極端に短い行を作らない。"
-    "改行後は各行の見た目の横幅を揃え、中央揃えを基本に、行間・字間・左右余白を再調整する。"
-    "上段だけ長い、下段だけ短い、片側へ寄る構成を避け、テキストブロック全体の重心を中央に整える。"
-)
-
-PROFESSIONAL_REVIEW = (
-    "納品前に、プロのイラストレーター兼アートディレクターとして100％表示とスマートフォン縮小表示の両方で最終検品する。"
-    "誤字、文字化け、単語途中の改行、行頭禁則、各行の長さ、中央揃え、行間、余白、視覚的重心、"
-    "文字と人物の重なり、領域越境、人物の顔・手指・身体、小物、背景、色、コントラスト、媒体サイズを確認する。"
-    "1項目でも不合格なら内部で修正して再検品し、すべて合格した完成版だけを出力する。"
-    "ラフ、途中経過、未検品版、複数候補は出力しない。"
-)
-
-MARKETING_REVIEW = (
-    "さらに納品前に、プロのマーケティングコンサルタントとして最終確認する。"
-    "想定読者の悩みとの一致、最初の3秒の訴求力、内容理解のしやすさ、媒体特性、視聴維持、商品の魅力、"
-    "押し売り感のない購入導線、販売形態に合う広告・商品案内表示、事実にない誇張や効果保証がないことを確認する。"
-    "見出し・イラスト・説明・CTAの優先順位が明確で、読者が次に何をすべきか自然に理解できる状態にする。"
-    "1項目でも不合格ならコピー、構図、順序、CTAを修正して再確認し、マーケティング上も合格した完成版だけを出力する。"
-)
+CAROUSEL_LAYOUT = '上部見出し18％・中央イラスト57％・下部説明カード25％。文字とイラストの領域を完全分離'
+CAROUSEL_FONT = '太めの日本語ゴシック。見出し64〜80px、説明36〜44px以上、最大4行、行間1.25〜1.4倍'
+ARTICLE_IMAGE_LAYOUT = '左側35％を文字専用、右側65％をイラスト専用。人物や商品に文字を重ねない'
+ARTICLE_IMAGE_FONT = '太めの日本語ゴシック。見出し56〜72px、補足30〜38px以上、行間1.25〜1.4倍'
+IMAGE_QUALITY = ('広告・出版分野で経験豊富なプロのイラストレーターによる高品質な商用イラスト。'
+                 '明るい自然光、清潔感、奥行き、正確な人体と手指、自然な日本の生活場面。'
+                 '安価な素材集風、架空の認証、実在ロゴ、透かし、意味不明な文字を禁止。')
+BRIGHT_VISUAL_RULES = ('白を基調とした明るいハイキー表現。コーラル、黄色、空色、ミントを適切に調和。'
+                       '暗い色調や恐怖をあおる構図を避け、主役と内容がひと目で伝わる。')
+CONTENT_VISUAL_RULES = ('記事の要点に合う人物の表情・視線・動作・場所・小物を具体的に描く。'
+                        '記事にない効果・数値・設備・資格・商品パッケージを創作しない。')
+TEXT_LAYOUT_RULES = ('文字専用領域とイラスト領域を完全分離し、1ピクセルも越境させない。'
+                     '自然な日本語の文節で改行し、固有名詞・商品名・数字と単位を分割しない。'
+                     '助詞や句読点を行頭に置かず、中央揃えと余白を調整する。')
+PROFESSIONAL_REVIEW = ('スマートフォン縮小表示と原寸で、誤字・文字切れ・人物・手指・越境・'
+                       '可読性を点検する。確認できない場合は検品済みと称さない。')
+MARKETING_REVIEW = ('対象読者の悩み、最初の3秒、押し売りしないCTA、広告表示、'
+                    '誇張や効果保証の有無を確認する。')
 
 
-def _strip_code_fence(text: str) -> str:
-    cleaned = text.strip()
-    cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
-    cleaned = re.sub(r"\s*```$", "", cleaned)
-    return cleaned.strip()
+def _strip_code_fence(text):
+    text = str(text or '').strip()
+    return re.sub(r'\s*```$', '', re.sub(r'^```(?:json)?\s*', '', text, flags=re.I)).strip()
 
 
-def _load_json_response(raw: str) -> dict:
+def _load_json_response(raw):
     cleaned = _strip_code_fence(raw)
     candidates = [cleaned]
-    start, end = cleaned.find("{"), cleaned.rfind("}")
-    if start >= 0 and end > start:
-        candidates.append(cleaned[start : end + 1])
+    start, end = cleaned.find('{'), cleaned.rfind('}')
+    if 0 <= start < end:
+        candidates.append(cleaned[start:end + 1])
     for candidate in candidates:
         try:
-            data = json.loads(re.sub(r",\s*([}\]])", r"\1", candidate))
-            if isinstance(data, dict):
-                return data
-        except json.JSONDecodeError:
-            continue
-    raise json.JSONDecodeError("SNS構成のJSONを解析できません。", cleaned, 0)
+            result = json.loads(re.sub(r',\s*([}\]])', r'\1', candidate))
+            if isinstance(result, dict):
+                return result
+        except (ValueError, TypeError):
+            pass
+    raise ValueError('SNS構成のJSONを解析できません。')
 
 
-def _as_dict(value, text_key: str = "text") -> dict:
-    if isinstance(value, dict):
+def _as_dict(value, text_key='text'):
+    return value if isinstance(value, dict) else ({text_key: value} if isinstance(value, str) else {})
+
+
+def _as_list(value):
+    return value if isinstance(value, list) else ([] if value in (None, '') else [value])
+
+
+def _hashtags(value):
+    return ' '.join(map(str, value)) if isinstance(value, list) else str(value or '')
+
+
+def _five_hashtags(value, article=''):
+    raw = value if isinstance(value, list) else re.findall(r'[#＃][^\s#＃]+', str(value or ''))
+    tags = []
+    for entry in raw:
+        tag = str(entry).strip().replace('＃', '#')
+        tag = '#' + tag.lstrip('#').split()[0] if tag else ''
+        if tag and tag not in tags:
+            tags.append(tag)
+    for tag in ('#商品選び', '#購入前に確認', '#暮らしのヒント', '#商品レビュー', '#おすすめ情報'):
+        if len(tags) >= 5:
+            break
+        if tag not in tags:
+            tags.append(tag)
+    return tags[:5]
+
+
+def _plain_text(value, limit=90):
+    """Keep whole Japanese phrases rather than cutting inside words or sentences."""
+    value = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', str(value or ''))
+    value = re.sub(r'[*_`>#]', '', value)
+    value = re.sub(r'\s+', ' ', value).strip()
+    if limit is None or len(value) <= limit:
         return value
-    if isinstance(value, str):
-        return {text_key: value}
-    return {}
+    prefix = value[:limit]
+    # Prefer a complete sentence or a phrase boundary; never append a fragment.
+    boundaries = [m.end() for m in re.finditer(r'[。！？!?、，,；;：:]|\s+', prefix)]
+    viable = [n for n in boundaries if n >= max(8, int(limit * .45))]
+    return prefix[:viable[-1]].strip() if viable else prefix.rstrip('、，,・/（(').strip() + '…'
 
 
-def _as_list(value) -> list:
-    if isinstance(value, list):
-        return value
-    if value in (None, ""):
-        return []
-    return [value]
+def _safe_filename_part(value, limit=24):
+    return re.sub(r'[\\/:*?"<>|]', '', _plain_text(value, limit)).replace(' ', '_').strip('._') or '記事セクション'
 
 
-def _hashtags(value) -> str:
-    if isinstance(value, list):
-        return " ".join(str(tag) for tag in value)
-    return str(value or "")
+def _article_title(article):
+    for line in str(article or '').splitlines():
+        match = re.match(r'^#\s+(.+)', line.strip())
+        if match:
+            return _plain_text(match.group(1), 80)
+    return '記事のポイント'
 
 
-def _validate_social_plan(data: dict) -> None:
-    required = (
-        "x_posts", "threads", "facebook", "line", "carousel",
-        "reel", "youtube", "tiktok", "creative_prompts",
-    )
-    missing = [key for key in required if key not in data]
-    if missing:
-        raise ValueError(f"SNS構成に必要な項目が不足しています：{', '.join(missing)}")
-    if len(data.get("carousel", {}).get("slides", [])) != 9:
-        raise ValueError("Instagramカルーセル構成が9枚ではありません。")
-    prompts = data.get("creative_prompts", {})
-    prompt_keys = (
-        "product_promo_image", "store_pop_image", "x_image", "facebook_eyecatch", "threads_image", "line_image",
-        "instagram_carousel", "reel_cover", "reel_video", "youtube_thumbnail",
-        "youtube_video", "tiktok_cover", "tiktok_video",
-    )
-    if any(key not in prompts for key in prompt_keys):
-        raise ValueError("画像・動画制作用プロンプトが不足しています。")
-    if len(prompts.get("instagram_carousel", [])) != 9:
-        raise ValueError("Instagramカルーセル用プロンプトが9枚ではありません。")
-    if not prompts.get("article_section_images"):
-        raise ValueError("記事各セクション用の画像プロンプトがありません。")
-    for key in ("reel", "youtube", "tiktok"):
-        if not _as_dict(data.get(key), "caption").get("scenes"):
-            raise ValueError(f"{key}の動画構成がありません。")
-
-
-def _plain_text(value: str, limit: int = 90) -> str:
-    value = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", value or "")
-    value = re.sub(r"[*_`>#]", "", value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value[:limit]
-
-
-def _safe_filename_part(value: str, limit: int = 24) -> str:
-    value = _plain_text(value, limit)
-    value = re.sub(r'[\\/:*?"<>|]', "", value)
-    value = re.sub(r"\s+", "_", value).strip("._")
-    return value or "記事セクション"
-
-
-def _add_filename_instruction(item: dict, filename: str) -> dict:
-    """保存名は管理用メタデータにだけ入れ、生成プロンプト本文には混ぜない。"""
-    item["output_filename"] = filename
-    prompt = str(item.get("prompt", ""))
-    item["prompt"] = re.sub(
-        r"\s*完成データの推奨保存ファイル名は『[^』]+』とする。?",
-        "",
-        prompt,
-    ).strip()
-    return item
-
-
-def _add_video_audio_instructions(item: dict, media_key: str) -> dict:
-    prompt = str(item.get("prompt", "")).rstrip()
-    if media_key == "youtube_video":
-        font_rule = "冒頭表紙のキャッチコピー88〜112px、通常テロップ64〜80px以上"
-        cta_route = "最後は『自分に合いそうな方は、概要欄のリンクから詳しく確認してみてください』と自然に案内し、販売形態に合う広告・商品案内表示を添える"
-    else:
-        font_rule = "冒頭表紙のキャッチコピー96〜120px、通常テロップ72〜88px以上"
-        cta_route = "最後は『自分に合いそうな方は、プロフィールのリンクから詳しく確認してみてください』と自然に案内し、販売形態に合う広告・商品案内表示を添える"
-    instructions = (
-        "画面内にはInstagram、YouTube、TikTok、X、FacebookなどのSNS名、SNSロゴ、アプリアイコン、"
-        "ユーザー名、保存ファイル名、拡張子、透かしを表示しない。SNS名は制作データの管理用名称にだけ使用する。"
-        "動画の0.0秒から3.5〜4秒の完成した表紙シーンを必ず表示し、黒画面・空白・待機・フェードインを入れない。記事の要点が一目で伝わる短いキャッチコピーを大きく表示する。"
-        "表紙シーンはテキスト専用エリアとメインイラスト領域を完全分離し、キャッチコピーで人物や商品を隠さない。"
-        f"フォントは太めの日本語ゴシック体を使い、{font_rule}とする。これより小さい文字サイズの指定があれば、この指定を優先する。"
-        "テロップは原則2行以内とし、句読点や意味のまとまりで自然に改行する。助詞・助動詞・句読点を行頭に置かず、"
-        "単語、固有名詞、商品名、数字と単位の途中では改行しない。1行を短くし、機械的な均等改行を禁止する。"
-        "人の声、音声ナレーション、読み上げ音声、会話音声は一切入れず、narration欄の文章を画面テロップとして使用する。"
-        "テロップは左から右へ1文字ずつ現れるタイピング演出とし、1文字0.04〜0.07秒、入力完了後は1.5〜2秒保持する。"
-        "動画全編に、明るくポップで前向きな著作権上利用可能なインストゥルメンタルBGMを入れる。"
-        "BGMは0.0秒から開始し、タイピング演出と映像の切り替えをリズムに合わせ、終了時だけ自然にフェードアウトさせる。"
-        "場面転換は0.2〜0.4秒、テロップ間の空白は最大0.2秒とし、BGMの音切れを禁止する。"
-        "動画の最後に3〜4秒の商品案内シーンを設け、記事で確認できた事実だけを使い、商品が向く人へ押し売りにならない言葉で勧める。"
-        f"{cta_route}。最後の商品案内でも、人物・商品とテキストの表示領域を完全分離する。"
-    )
-    if "音声ナレーション、読み上げ音声、会話音声は一切入れず" not in prompt:
-        item["prompt"] = f"{prompt} {instructions}".strip()
-    return item
-
-
-def _article_sections(article: str) -> list[dict]:
-    """Markdown本文からH2/H3と直後の要点を抽出する。"""
-    sections = []
-    current = None
-    body = []
-    for raw in article.splitlines():
-        heading = re.match(r"^(#{2,3})\s+(.+)$", raw.strip())
-        if heading:
+def _article_sections(article):
+    sections, current, body = [], None, []
+    for line in str(article or '').splitlines():
+        match = re.match(r'^(#{2,3})\s+(.+)', line.strip())
+        if match:
             if current:
-                current["summary"] = _plain_text(" ".join(body), 120)
+                current['summary'] = _plain_text(' '.join(body), 120)
                 sections.append(current)
-            current = {
-                "level": "H2" if len(heading.group(1)) == 2 else "H3",
-                "heading": _plain_text(heading.group(2), 36),
-            }
+            current = {'level': 'H2' if len(match.group(1)) == 2 else 'H3',
+                       'heading': _plain_text(match.group(2), 80)}
             body = []
-        elif current and raw.strip():
-            body.append(raw.strip())
+        elif current and line.strip():
+            body.append(line.strip())
     if current:
-        current["summary"] = _plain_text(" ".join(body), 120)
+        current['summary'] = _plain_text(' '.join(body), 120)
         sections.append(current)
     return sections[:30]
 
 
-def _article_title(article: str) -> str:
-    for raw in article.splitlines():
-        match = re.match(r"^#\s+(.+)$", raw.strip())
-        if match:
-            return _plain_text(match.group(1), 22)
-    return "悩みを解決するヒント"
+def _affiliate_mode(context):
+    return 'アフィリエイト' in str(context) or '両方' in str(context)
 
 
-def _ensure_video_scenes(
-    item: dict, media_key: str, article: str,
-    promotion_context: str = "アフィリエイト販売",
-) -> dict:
-    scenes = [_as_dict(scene, "narration") for scene in _as_list(item.get("scenes"))]
-    catch_copy = _plain_text(item.get("title") or item.get("caption") or _article_title(article), 22)
-    if not scenes or scenes[0].get("scene_type") != "opening_cover":
-        scenes.insert(0, {
-            "scene_type": "opening_cover",
-            "duration": "3.5〜4秒",
-            "caption": catch_copy,
-            "narration": catch_copy,
-            "direction": "最初の表紙。0.0秒から完成状態で表示し、大きなキャッチコピーとメインイラストを完全分離して、落ち着いて読める時間を確保する。",
-        })
-    else:
-        scenes[0]["duration"] = "3.5〜4秒"
+def _store_only(context):
+    return '販売目的：院内・店舗販売' in str(context) and '案内先URL：未設定' in str(context)
 
-    store_only_without_url = (
-        "販売目的：院内・店舗販売" in promotion_context
-        and "案内先URL：未設定" in promotion_context
-    )
-    if store_only_without_url:
-        cta_caption = "院内でご相談ください"
-        cta_narration = "気になる方は、ご来店時に院内スタッフへお気軽にお声がけください。"
-    elif media_key == "youtube":
-        cta_caption = "公式サイトで詳しく確認"
-        cta_narration = "自分に合いそうだと感じた方は、概要欄のリンクから公式サイトを確認してみてください。"
+
+def _disclosure(context):
+    return '【PR】' if _affiliate_mode(context) else '【商品案内】'
+
+
+def _mark_text(value, context):
+    value = re.sub(r'【(?:PR|商品案内)】', '', str(value or '')).strip()
+    value = re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', value)
+    return _disclosure(context) + ('\n' + value if value else '')
+
+
+def _fallback_line(article):
+    return (f'{_article_title(article)}について、商品の特徴や利用前に'
+            '確認したいポイントを記事にまとめました。\n詳しくは記事でご確認ください。')
+
+
+def _fallback_video_points(article):
+    result = []
+    for section in _article_sections(article):
+        heading = _plain_text(section.get('heading'), 30)
+        summary = _plain_text(section.get('summary'), 45)
+        if heading and summary:
+            result.append({'scene_type': 'content', 'caption': heading,
+                           'narration': summary,
+                           'visual': f'記事の「{heading}」を表す具体的な生活場面。記事にない事実を描かない。'})
+    return result
+
+
+def _url_pattern(url):
+    """Match only the known URL, allowing whitespace around query separators."""
+    pieces = re.split(r'([?&=])', str(url or '').strip())
+    return ''.join(r'\s*' + re.escape(p) + r'\s*' if p in '?&=' else re.escape(p)
+                   for p in pieces if p)
+
+
+def _strip_affiliate_link(value, url):
+    value, url = str(value or '').strip(), str(url or '').strip()
+    if not url:
+        return value
+    value = re.sub(_url_pattern(url), '', value, flags=re.I)
+    base = url.split('?', 1)[0]
+    if '?' in url:
+        value = re.sub(re.escape(base) + r'\s*\?\s*(?=\n|$)', '', value, flags=re.I)
+        query = url.split('?', 1)[1]
+        value = re.sub(r'(?m)^\s*' + re.escape(query) + r'\s*$', '', value)
+    return re.sub(r'\n{3,}', '\n\n', value).strip()
+
+
+def _ensure_link(value, url):
+    value, url = str(value or '').strip(), str(url or '').strip()
+    if not url:
+        return value
+    value = _strip_affiliate_link(value, url)
+    return value + ('\n' if value else '') + url
+
+
+def _fix_video_timing(item):
+    scenes = item.get('scenes', [])
+    if len(scenes) < 3:
+        return
+    middle = len(scenes) - 2
+    durations = [4] + [34 // middle + (1 if i < 34 % middle else 0)
+                       for i in range(middle)] + [4]
+    for scene, duration in zip(scenes, durations):
+        scene['duration'] = f'{duration}秒'
+    item['total_duration'] = '42秒'
+
+
+def _ensure_video_scenes(item, media_key, article, promotion_context='アフィリエイト販売'):
+    scenes = [_as_dict(scene, 'narration') for scene in _as_list(item.get('scenes'))]
+    title = _plain_text(item.get('title') or _article_title(article), 28)
+    opening = {'scene_type': 'opening_cover', 'caption': title,
+               'narration': title, 'visual': '明るい表紙。文字と人物を分離する。'}
+    if _store_only(promotion_context):
+        caption, narration = '院内でご相談ください', 'ご来店時にスタッフへお気軽にご相談ください。'
+    elif media_key == 'youtube':
+        caption, narration = '概要欄から詳しく確認', '詳しくは概要欄のリンクをご確認ください。'
     else:
-        cta_caption = "詳しくはプロフィールへ"
-        cta_narration = "自分に合いそうだと感じた方は、プロフィールのリンクから詳しく確認してみてください。"
-    last_text = " ".join(str(value) for value in scenes[-1].values()) if scenes else ""
-    if not any(word in last_text for word in ("プロフィール", "概要欄", "公式サイト", "詳しく確認", "院内", "相談")):
-        scenes.append({
-            "scene_type": "affiliate_cta",
-            "duration": "3〜4秒",
-            "caption": cta_caption,
-            "narration": cta_narration,
-            "direction": "最後の商品案内。向いている人へ自然に勧め、押し売り表現は使わない。",
-        })
-    else:
-        scenes[-1].setdefault("scene_type", "affiliate_cta")
-        scenes[-1].setdefault("duration", "3〜4秒")
-    for scene in scenes:
-        scene["narration"] = _plain_text(scene.get("narration", ""), 45)
-    item["scenes"] = scenes
+        caption, narration = '詳しくはプロフィールへ', '詳しくはプロフィールのリンクをご確認ください。'
+    cta = {'scene_type': 'affiliate_cta', 'caption': caption,
+           'narration': narration, 'visual': '自然な商品案内。文字の安全余白を確保する。'}
+    candidates = [scene for scene in scenes
+                  if scene.get('scene_type') not in ('opening_cover', 'affiliate_cta')]
+    candidates += _fallback_video_points(article)
+    selected, seen = [], set()
+    for scene in candidates:
+        heading = _review_safe_copy(_plain_text(scene.get('caption'), 40))
+        body = _review_safe_copy(_plain_text(scene.get('narration'), 45))
+        if not heading or not body:
+            continue
+        key = re.sub(r'[\W_]+', '', heading).lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        selected.append({'scene_type': 'content', 'caption': heading,
+                         'narration': body,
+                         'visual': _review_safe_copy(scene.get('visual')) or '記事に沿った明るい生活場面'})
+        if len(selected) == 6:
+            break
+    if not selected:
+        selected.append({'scene_type': 'content', 'caption': '記事のポイント',
+                         'narration': '商品の特徴や注意点を記事でご確認ください。',
+                         'visual': '記事の内容を表す明るい生活場面'})
+    item['scenes'] = [opening] + selected + [cta]
+    _fix_video_timing(item)
     return item
 
 
-def _carousel_prompt(slide: dict, number: int) -> dict:
-    title = _plain_text(slide.get("title", ""), 22) or ("内容を確認" if number < 9 else "詳しく確認する")
-    body = _plain_text(slide.get("body", ""), 70) or "記事の要点を短く分かりやすく伝える"
-    item = {
-        "slide": number,
-        "size": "1080×1350",
-        "catch_copy": title,
-        "body_text": body,
-        "layout": CAROUSEL_LAYOUT,
-        "font_spec": CAROUSEL_FONT,
-        "prompt": (
-            "キャンバスをテキスト専用エリアとイラスト表示エリアに完全分離する。"
-            "広告・出版分野で経験豊富なプロのイラストレーターが制作する、細部まで丁寧で求心力のある商用イラスト。"
-            f"1080×1350。{CAROUSEL_LAYOUT}。上部に『{title}』、下部カードに『{body}』を一字一句正確に入れる。"
-            f"{CAROUSEL_FONT}。文字が収まらない場合はフォントを小さくせず文章を短くする。"
-            "句読点や意味のまとまりで自然に改行し、助詞・助動詞・句読点を行頭に置かない。"
-            "単語、固有名詞、商品名、数字と単位の途中では改行せず、機械的な均等改行を禁止する。"
-            "中央57％には人物・商品・背景だけを描き、文字・数字・帯・吹き出しを1ピクセルも侵入させない。"
-            "清潔感、信頼感、親しみやすさのある配色と自然な表情。不自然な手指、ロゴ、透かし、文字化けを避ける。"
-            "スマートフォン縮小表示で確認し、越境・誤字・読みにくさがあれば修正して再生成する。"
-        ),
-    }
-    return _add_filename_instruction(item, f"Instagram_カルーセル_{number:02d}.png")
+def _add_filename_instruction(item, filename):
+    item['output_filename'] = filename
+    item['prompt'] = re.sub(r'\s*完成データの推奨保存ファイル名は『[^』]+』とする。?', '',
+                            str(item.get('prompt', ''))).strip()
+    return item
 
 
-def _article_section_prompt(section: dict, number: int) -> dict:
-    heading = section.get("heading", "記事のポイント")
-    summary = section.get("summary", "このセクションの要点を視覚的に分かりやすく表現する")
-    item = {
-        "section": number,
-        "heading_level": section.get("level", "H2"),
-        "heading": heading,
-        "size": "1200×675",
-        "catch_copy": heading,
-        "sub_copy": summary[:55],
-        "layout": ARTICLE_IMAGE_LAYOUT,
-        "font_spec": ARTICLE_IMAGE_FONT,
-        "prompt": (
-            "キャンバスをテキスト専用エリアとイラスト表示エリアの2領域へ完全分離する。"
-            "広告・出版分野で経験豊富なプロのイラストレーターが制作する、細部まで丁寧で求心力のある高品質な商用イラスト。"
-            f"ブログ記事の『{heading}』セクションに挿入する横長画像、1200×675。内容の要点は『{summary}』。"
-            f"{ARTICLE_IMAGE_LAYOUT}。左側に見出し『{heading}』と、必要な場合のみ短い補足『{summary[:55]}』を正確に入れる。"
-            f"{ARTICLE_IMAGE_FONT}。文字が収まらない場合はフォントを小さくせず補足文を短く要約する。"
-            "句読点や意味のまとまりで自然に改行し、助詞・助動詞・句読点を行頭に置かない。"
-            "単語、固有名詞、商品名、数字と単位の途中では改行せず、機械的な均等改行を禁止する。"
-            "右側にはセクション内容を一目で理解できる人物・表情・仕草・背景・小物を具体的かつ自然に描く。"
-            "右側のイラスト領域には文字・数字・帯・吹き出しを一切置かず、左側の文字や装飾も1ピクセルも越境させない。"
-            "清潔感、信頼感、親しみやすさのある配色と十分な余白を使い、素材集風、幼すぎる絵、不自然な手指、"
-            "実在ロゴ、透かし、文字化けを避ける。スマートフォン表示で可読性と領域分離を検査し、問題があれば再生成する。"
-        ),
-    }
-    filename = f"ブログ_{section.get('level', 'H2')}_{number:02d}_{_safe_filename_part(heading)}.png"
-    return _add_filename_instruction(item, filename)
+def _add_video_audio_instructions(item, media_key):
+    text = ('人の声・ナレーションは禁止。日本語のタイピング風テロップと、'
+            '0秒から途切れない著作権上利用可能な明るいBGMを使用する。')
+    if text not in item.get('prompt', ''):
+        item['prompt'] = str(item.get('prompt', '')).rstrip() + '\n' + text
+    return item
 
 
-def _image_prompt_item(
-    title: str,
-    body: str,
-    size: str,
-    layout: str,
-    font_spec: str,
-    filename: str,
-    scene: str = "",
-) -> dict:
-    title = _plain_text(title, 10000) or "記事のポイント"
-    body = _plain_text(body, 10000)
-    visual_direction = _plain_text(scene or f"{title}。{body}", 180)
-    prompt = (
-        "キャンバスをイラスト表示エリアとテキスト専用エリアの2領域へ完全分離する。"
-        f"{IMAGE_QUALITY}{BRIGHT_VISUAL_RULES}{CONTENT_VISUAL_RULES}"
-        f"出力サイズは{size}。この画像が担当する記事の要点と具体的な場面は『{visual_direction}』。"
-        "抽象的な飾りや汎用的な人物に置き換えず、この要点に固有の状況を中心に描く。"
-        f"レイアウトは{layout}。テキスト専用エリアへ見出し『{title}』"
-        + (f"、補足『{body}』" if body else "")
-        + "を一字一句正確に入れる。イラスト領域には人物・背景・小物だけを描き、文字・数字・帯・吹き出しを置かない。"
-        "テキスト領域には人物や重要なイラストを置かず、両領域を1ピクセルも越境させない。人物の顔、手、商品、重要な小物を文字で隠さない。"
-        f"フォントは{font_spec}。{TEXT_LAYOUT_RULES}"
-        "補足のフォントサイズは見出しの約80％にする。文字が収まらない場合は領域を広げるか意味を保った短文に推敲し、正式名称は短縮しない。"
-        "高コントラストと十分な安全余白を確保する。"
-        f"{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}"
-    )
-    return {
-        "size": size,
-        "catch_copy": title,
-        "sub_copy": body,
-        "layout": layout,
-        "font_spec": font_spec,
-        "output_filename": filename,
-        "prompt": prompt,
-    }
+def _image_prompt_item(title, body, size, layout, font_spec, filename, scene=''):
+    title, body = _plain_text(title, 120), _plain_text(body, 180)
+    prompt = (f'キャンバスをイラスト表示エリアとテキスト専用エリアへ完全分離する。'
+              f'{IMAGE_QUALITY}{BRIGHT_VISUAL_RULES}{CONTENT_VISUAL_RULES}'
+              f'出力サイズ：{size}。配置：{layout}。フォント：{font_spec}。'
+              f'画像内の見出しは「{title}」、補足は「{body}」。'
+              f'描写する具体的な場面：{_plain_text(scene or title + body, 220)}。'
+              f'{TEXT_LAYOUT_RULES}文字は指定した専用領域にのみ置く。'
+              f'文字が多ければ意味を保って短縮し、正式名称は切らない。'
+              f'{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}')
+    return {'size': size, 'catch_copy': title, 'sub_copy': body, 'layout': layout,
+            'font_spec': font_spec, 'output_filename': filename, 'prompt': prompt}
 
 
-def _video_prompt_item(
-    plan_item: dict,
-    size: str,
-    duration: str,
-    filename: str,
-    vertical: bool,
-) -> dict:
+def _video_prompt_item(plan_item, size, duration, filename, vertical):
+    scenes = [_as_dict(x, 'narration') for x in _as_list(plan_item.get('scenes'))]
+    layout = ('上部コピー帯20％・中央映像55％・下部テロップ帯10％・操作UI安全余白15％'
+              if vertical else '横型16:9。人物・映像と文字を左右に分離し、下部に独立した字幕帯')
+    font = ('太めの日本語ゴシック。表紙96〜120px、通常テロップ72〜88px、最大2行、行間1.25〜1.4倍'
+            if vertical else '太めの日本語ゴシック。表紙88〜112px、通常テロップ64〜80px、最大2行、行間1.25〜1.4倍')
     scene_lines = []
-    scene_texts = []
-    for index, raw_scene in enumerate(_as_list(plan_item.get("scenes")), 1):
-        scene = _as_dict(raw_scene, "narration")
-        heading = _plain_text(scene.get("caption", ""), 10000)
-        telop_text = _plain_text(scene.get("narration", ""), 10000)
-        visual = _plain_text(scene.get("visual") or scene.get("direction", ""), 120)
-        scene_texts.append(f"{heading} {telop_text} {visual}")
+    for index, scene in enumerate(scenes, 1):
         scene_lines.append(
-            f"シーン{index}（4〜6秒を目安）：上部見出し『{heading}』。"
-            f"音声にせずタイピング風に表示するテロップ本文『{telop_text}』。"
-            f"このシーンが担当する記事の要点は『{heading}。{telop_text}』。"
-            f"イラストは『{visual or telop_text}』を表す具体的な人物・表情・視線・動作・背景・小物。"
-            "見出し、テロップ、イラストを同じ要点に一致させ、内容と無関係な汎用場面にしない。"
-        )
-    scene_script = " ".join(scene_lines)
-    store_only_cta = any(
-        word in " ".join(scene_texts) for word in ("院内スタッフ", "ご来店時", "院内でご相談")
-    )
-    if vertical:
-        layout = "上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・右端と最下部の操作UI用安全余白15％"
-        font_spec = "太めの日本語ゴシック体。表紙メイン96〜120px、表紙サブはメインの約80％、場面見出し72〜88px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = (
-            "最後の3〜4秒は【商品案内】を示し、商品が向く人へ自然に勧め、ご来店時に院内スタッフへ声をかけるよう案内する。URLやプロフィールリンクは表示しない"
-            if store_only_cta else
-            "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、プロフィールの購入・詳細確認先へ案内する"
-        )
-    else:
-        layout = "人物・映像と文字を左右に完全分離し、下部に独立した字幕帯を設け、重要要素を画面端から十分に離す"
-        font_spec = "太めの日本語ゴシック体。表紙メイン88〜112px、表紙サブはメインの約80％、場面見出し64〜80px、下部補足は見出しの約80％、最大2行、行間1.25〜1.4倍"
-        cta = (
-            "最後の3〜4秒は【商品案内】を示し、商品が向く人へ自然に勧め、ご来店時に院内スタッフへ声をかけるよう案内する。URLや概要欄リンクは表示しない"
-            if store_only_cta else
-            "最後の3〜4秒は販売形態に合う広告・商品案内表示を示し、商品が向く人へ自然に勧め、概要欄の購入・詳細確認先へ案内する"
-        )
+            f'シーン{index}（{scene.get("duration", "")}、{scene.get("scene_type", "content")}）：'
+            f'上部見出し「{_plain_text(scene.get("caption"), 80)}」。'
+            f'下部テロップ「{_plain_text(scene.get("narration"), 90)}」。'
+            f'映像「{_plain_text(scene.get("visual") or scene.get("direction"), 180)}」。')
     prompt = (
-        "各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。"
-        "あなたは読者心理、購買行動、視聴維持を熟知したプロのマーケティングコンサルタントであり、"
-        "プロのイラストレーター兼映像ディレクターである。情報の優先順位と視線誘導を設計した高品質なイラスト動画を制作する。"
-        f"{BRIGHT_VISUAL_RULES}{CONTENT_VISUAL_RULES}"
-        f"出力は{size}、長さは{duration}。{layout}。全フレームで境界を固定し、文字・帯・字幕を映像領域へ越境させない。"
-        "再生開始0.0秒の最初のフレームから、完成した表紙イラストと短いキャッチコピーを明るく鮮明に表示する。"
-        "冒頭の黒画面、空白画面、無地背景、読み込み待ち、暗転、黒からのフェードインを一切入れない。"
-        "表紙は3.5〜4秒間表示する。最初の0.5秒以内に完成した表紙を表示し、視聴者がキャッチコピーとイラストを落ち着いて読める時間を確保する。"
-        f"{font_spec}。上部は場面見出し、下部は具体的な補足説明とし、同じ文章を上下へ重複表示しない。"
-        "下部の補足（サブテキスト）のフォントサイズは、上部の見出し（メインテキスト）の約80％に統一する。"
-        f"すべての画面テキストは日本語にする。{TEXT_LAYOUT_RULES}"
-        "動画全体で完成記事の重要点を順番に要約する。冒頭で読者の悩みや関心を示し、中盤で原因・知識・手順などの主要点、"
-        "終盤で商品・サービスの理解と次の行動を示す。各シーンは記事の異なる要点を1つずつ担当し、同じ内容や似た構図を繰り返さない。"
-        "同じ主人公、画風、色設計を保ちながら、場面ごとに表情、動作、背景、小物、カメラ距離を変え、一続きの物語として見せる。"
-        f"場面構成：{scene_script} "
-        "人の声、音声ナレーション、読み上げ音声、会話音声は一切入れない。元のnarration欄の文章はすべて画面テロップとして使用する。"
-        "テロップ本文は、パソコンやスマートフォンで文字を入力しているように、左から右へ1文字ずつ現れるタイピング演出にする。"
-        "1文字の表示間隔は0.04〜0.07秒を目安とし、1行を打ち終えた後は1.5〜2秒読める状態で保持する。点滅カーソルは控えめにし、読みにくい高速表示は禁止する。"
-        "テロップは下部専用帯の中央へ配置し、人物の顔・手・身体、商品、重要な小物、場面の主役と1ピクセルも重ねない。"
-        "前のテロップが消えてから次のテロップが始まるまでの空白は最大0.2秒とし、場面転換は0.2〜0.4秒で行う。"
-        "明るくポップで前向きな、著作権上利用可能なインストゥルメンタルBGMを0.0秒から入れる。"
-        "メジャーキーの軽快なピアノ、ウクレレ、柔らかなギター、控えめな手拍子と軽いパーカッションを使い、親しみ・安心感・期待感が伝わる曲調にする。"
-        "子ども向けすぎる音、騒がしい音、コミカルすぎる音、暗い・不安・悲しい・重い曲調は禁止する。"
-        "BGMは場面転換中も途切れさせず、テロップのタイピング演出と映像の切り替えをリズムに合わせ、終了時だけ自然にフェードアウトする。"
-        "意味のない静止、BGMの音切れ、冒頭の黒フレームは禁止し、問題があれば再生成する。"
-        f"{cta}。Instagram、YouTube、TikTok、X、FacebookなどのSNS名、SNSロゴ、アプリアイコン、"
-        "ユーザー名、保存ファイル名、拡張子、透かしを画面に表示しない。不自然な身体変形、激しい点滅、過剰な動きを避ける。"
-        "映像の検品では、プロのイラストレーター兼映像ディレクターが全フレームを確認し、上下テキストの重複、タイピング順序、読める保持時間、文字の欠落、"
-        "テロップと人物・商品・イラストの重なり、安全余白、文字のバランス、場面転換、音声ナレーションが混入していないこと、BGMの明るさと音切れも確認する。"
-        f"{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}"
-    )
-    return {
-        "size": size,
-        "duration": duration,
-        "layout": layout,
-        "font_spec": font_spec,
-        "output_filename": filename,
-        "prompt": prompt,
-    }
+        '各フレームを映像表示エリアとテロップ専用エリアへ完全分離する。'
+        'プロのイラストレーターと映像ディレクターが共同制作する、求心力のある高品質なイラスト動画。'
+        f'{BRIGHT_VISUAL_RULES}{CONTENT_VISUAL_RULES}'
+        f'サイズ：{size}。総尺は正確に{duration}。配置：{layout}。フォント：{font}。'
+        '最初の0.0秒から完成した明るい表紙を4秒表示。黒画面、空白、待機、フェードイン禁止。'
+        '最終4秒は記事に基づく自然な商品案内とCTA。広告なら【PR】を明示する。'
+        '全シーンの指定秒数を守り、余計な静止や尺の延長をしない。'
+        '各シーンの詳細：' + ' '.join(scene_lines) +
+        '人の声、音声ナレーション、読み上げ、会話音声を入れない。'
+        'narration欄は音声ではなく下部の日本語テロップに使用する。'
+        '左から右へ1文字ずつ、1文字0.04〜0.07秒のタイピング演出。'
+        '表示後1.5〜2秒保持し、場面転換は0.2〜0.4秒。'
+        '明るく穏やかで少しポップな、利用権を確認できるインストゥルメンタルBGMを0秒から流し、'
+        '最後だけフェードアウト。BGMの音切れを禁止する。'
+        '人物、商品、重要な小物と文字を重ねない。操作UIの安全余白を確保する。'
+        'SNS名・SNSロゴ・アプリアイコン・ユーザー名・ファイル名・透かしを画面に出さない。'
+        f'{TEXT_LAYOUT_RULES}{PROFESSIONAL_REVIEW}{MARKETING_REVIEW}')
+    return {'size': size, 'duration': duration,
+            'catch_copy': _plain_text(scenes[0].get('caption'), 80) if scenes else '',
+            'layout': layout, 'font_spec': font, 'output_filename': filename, 'prompt': prompt}
 
 
-def _build_creative_prompts(plan: dict, article: str) -> dict:
-    x_data = _as_dict(plan.get("x_image"))
-    facebook = _as_dict(plan.get("facebook"))
-    threads = _as_dict(plan.get("threads"))
-    line = _as_dict(plan.get("line"))
-    reel = _as_dict(plan.get("reel"), "caption")
-    youtube = _as_dict(plan.get("youtube"), "description")
-    tiktok = _as_dict(plan.get("tiktok"), "caption")
-    horizontal = "左側35％をテキスト専用、右側65％をイラスト専用とする左右分割。背景色と余白で境界を明確にする"
-    square = "上部25％を見出し、中央55％をイラスト、下部20％を補足専用カードとして3領域を完全分離する"
-    vertical = "上部20％を見出し、中央60％をイラスト、下部5％を補足、残り15％を操作UI用安全余白として固定する"
-    sections = _article_sections(article) or [{
-        "level": "H2", "heading": "商品のポイント",
-        "summary": _plain_text(article, 140) or "商品の要点を視覚的に分かりやすく表現する",
-    }]
-    product_title = _article_title(article)
-    product_body = sections[0].get("summary", "商品の特徴を分かりやすく確認する")
+def _carousel_prompt(slide, number):
+    item = _image_prompt_item(slide.get('title'), slide.get('body'), '1080×1350',
+                              CAROUSEL_LAYOUT, CAROUSEL_FONT,
+                              f'Instagram_カルーセル_{number:02d}.png', slide.get('visual', ''))
+    item.update({'slide': number, 'body_text': item['sub_copy']})
+    return item
+
+
+def _article_section_prompt(section, number):
+    heading = section.get('heading', '記事のポイント')
+    item = _image_prompt_item(heading, section.get('summary'), '1200×675',
+                              ARTICLE_IMAGE_LAYOUT, ARTICLE_IMAGE_FONT,
+                              f'ブログ_{section.get("level", "H2")}_{number:02d}_{_safe_filename_part(heading)}.png',
+                              f'{heading}。{section.get("summary", "")}')
+    item.update({'section': number, 'heading_level': section.get('level', 'H2'), 'heading': heading})
+    return item
+
+
+def _build_creative_prompts_original(plan, article):
+    x = _as_dict(plan.get('x_image'))
+    facebook, threads, line = (_as_dict(plan.get(k)) for k in ('facebook', 'threads', 'line'))
+    reel, youtube, tiktok = (_as_dict(plan.get(k)) for k in ('reel', 'youtube', 'tiktok'))
+    sections = _article_sections(article) or [{'level': 'H2', 'heading': '商品のポイント',
+                                                'summary': _plain_text(article, 120)}]
+    title = _article_title(article)
+    horizontal = '左35％文字・右65％イラストの左右分割。領域越境禁止'
+    square = '上部25％文字・中央55％イラスト・下部20％補足の3領域。領域越境禁止'
+    vertical = '上部20％見出し・中央60％イラスト・下部5％補足・UI安全余白15％'
+    hf = '太めの日本語ゴシック。見出し56〜72px、補足30〜38px以上、行間1.25〜1.4倍'
+    sf = '太めの日本語ゴシック。見出し64〜80px、補足34〜44px以上、行間1.25〜1.4倍'
+    vf = '太めの日本語ゴシック。見出し96〜120px、補足72〜88px以上、最大2行'
     prompts = {
-        "product_promo_image": _image_prompt_item(
-            product_title, product_body, "1200×1200", square,
-            "太めゴシック。見出し72〜92px、補足は見出しの約80％、最大4行",
-            MEDIA_FILENAMES["product_promo_image"],
-            f"商品紹介の主画像。『{product_title}』の特徴と、どのような読者向けかが一目で伝わる具体的な生活場面",
-        ),
-        "store_pop_image": _image_prompt_item(
-            product_title, "こんなお悩みがある方は、無理なく確認してみませんか？", "A4縦・1240×1754", vertical,
-            "太めゴシック。見出し80〜104px、補足は見出しの約80％、CTAは60px以上",
-            MEDIA_FILENAMES["store_pop_image"],
-            f"店頭で3秒見ただけでも『{product_title}』の対象者、要点、次の行動が分かる販促POP",
-        ),
-        "x_image": _image_prompt_item(x_data.get("title", ""), x_data.get("body", ""), "1200×675", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["x_image"], x_data.get("visual", "")),
-        "facebook_eyecatch": _image_prompt_item(facebook.get("image_title", ""), facebook.get("image_body", ""), "1200×630", horizontal, "太めゴシック。見出し56〜72px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["facebook_eyecatch"], facebook.get("visual", "")),
-        "threads_image": _image_prompt_item(threads.get("image_title", ""), threads.get("image_body", ""), "1080×1080", square, "太めゴシック。見出し64〜80px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["threads_image"], threads.get("visual", "")),
-        "line_image": _image_prompt_item(line.get("image_title", ""), line.get("image_body", ""), "1200×900", horizontal, "太めゴシック。見出し64〜82px、補足は見出しの約80％、行間1.25〜1.4倍", MEDIA_FILENAMES["line_image"], line.get("visual", "")),
-        "reel_cover": _image_prompt_item(reel.get("cover_title", ""), reel.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し96〜120px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["reel_cover"]),
-        "youtube_thumbnail": _image_prompt_item(youtube.get("thumbnail_title", ""), youtube.get("thumbnail_body", ""), "1280×720", horizontal, "太めゴシック。見出し88〜112px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["youtube_thumbnail"]),
-        "tiktok_cover": _image_prompt_item(tiktok.get("cover_title", ""), tiktok.get("cover_body", ""), "1080×1920", vertical, "太めゴシック。見出し96〜120px、補足は見出しの約80％、最大2行", MEDIA_FILENAMES["tiktok_cover"]),
-        "reel_video": _video_prompt_item(reel, "1080×1920", "40〜45秒", MEDIA_FILENAMES["reel_video"], True),
-        "youtube_video": _video_prompt_item(youtube, "1920×1080", "40〜45秒", MEDIA_FILENAMES["youtube_video"], False),
-        "tiktok_video": _video_prompt_item(tiktok, "1080×1920", "40〜45秒", MEDIA_FILENAMES["tiktok_video"], True),
+        'product_promo_image': _image_prompt_item(title, sections[0]['summary'], '1200×1200', square, sf,
+                                                   MEDIA_FILENAMES['product_promo_image'], '記事の内容に沿った商品紹介の生活場面'),
+        'store_pop_image': _image_prompt_item(title, '詳しくはスタッフへご相談ください', 'A4縦・1240×1754', vertical, vf,
+                                              MEDIA_FILENAMES['store_pop_image'], '店頭で3秒で内容が伝わる販促POP'),
+        'x_image': _image_prompt_item(x.get('title'), x.get('body'), '1200×675', horizontal, hf,
+                                      MEDIA_FILENAMES['x_image'], x.get('visual', '')),
+        'facebook_eyecatch': _image_prompt_item(facebook.get('image_title'), facebook.get('image_body'), '1200×630', horizontal, hf,
+                                                 MEDIA_FILENAMES['facebook_eyecatch'], facebook.get('visual', '')),
+        'threads_image': _image_prompt_item(threads.get('image_title'), threads.get('image_body'), '1080×1080', square, sf,
+                                            MEDIA_FILENAMES['threads_image'], threads.get('visual', '')),
+        'line_image': _image_prompt_item(line.get('image_title'), line.get('image_body'), '1200×900', horizontal, sf,
+                                         MEDIA_FILENAMES['line_image'], line.get('visual', '')),
+        'reel_cover': _image_prompt_item(reel.get('cover_title'), reel.get('cover_body'), '1080×1920', vertical, vf,
+                                         MEDIA_FILENAMES['reel_cover']),
+        'youtube_thumbnail': _image_prompt_item(youtube.get('thumbnail_title'), youtube.get('thumbnail_body'), '1280×720', horizontal, hf,
+                                                 MEDIA_FILENAMES['youtube_thumbnail']),
+        'tiktok_cover': _image_prompt_item(tiktok.get('cover_title'), tiktok.get('cover_body'), '1080×1920', vertical, vf,
+                                           MEDIA_FILENAMES['tiktok_cover']),
+        'reel_video': _video_prompt_item(reel, '1080×1920', '42秒', MEDIA_FILENAMES['reel_video'], True),
+        'youtube_video': _video_prompt_item(youtube, '1920×1080', '42秒', MEDIA_FILENAMES['youtube_video'], False),
+        'tiktok_video': _video_prompt_item(tiktok, '1080×1920', '42秒', MEDIA_FILENAMES['tiktok_video'], True),
+        'instagram_carousel': [_carousel_prompt(_as_dict(s, 'body'), i) for i, s in
+                               enumerate(_as_list(_as_dict(plan.get('carousel')).get('slides'))[:9], 1)],
+        'article_section_images': [_article_section_prompt(s, i) for i, s in enumerate(sections, 1)],
     }
-    prompts["instagram_carousel"] = []
-    carousel = _as_dict(plan.get("carousel"), "caption")
-    for index, raw_slide in enumerate(_as_list(carousel.get("slides"))[:9], 1):
-        slide = _as_dict(raw_slide, "body")
-        item = _image_prompt_item(
-            slide.get("title", ""), slide.get("body", ""), "1080×1350",
-            "上部18％を見出し、中央57％をイラスト、下部25％を説明カードとして固定し、3領域を完全分離する",
-            "太めゴシック。大見出し64〜80px、説明は大見出しの約80％、最大4行、行間1.25〜1.4倍",
-            f"Instagram_カルーセル_{index:02d}.png", slide.get("visual", ""),
-        )
-        item.update({"slide": index, "body_text": item.get("sub_copy", "")})
-        prompts["instagram_carousel"].append(item)
-    prompts["article_section_images"] = []
-    for index, section in enumerate(sections, 1):
-        item = _image_prompt_item(
-            section.get("heading", ""), section.get("summary", ""), "1200×675", horizontal,
-            "太めゴシック。見出し56〜72px、補足は見出しの約80％、1行15〜18文字以内、行間1.25〜1.4倍",
-            f"ブログ_{section.get('level', 'H2')}_{index:02d}_{_safe_filename_part(section.get('heading', ''))}.png",
-            f"記事の{section.get('level', 'H2')}『{section.get('heading', '')}』。要点：{section.get('summary', '')}",
-        )
-        item.update({"section": index, "heading_level": section.get("level", "H2"), "heading": section.get("heading", "")})
-        prompts["article_section_images"].append(item)
     return apply_quality_rules(prompts)
 
 
-def _normalize_social_plan(data: dict, article: str, promotion_context: str = "アフィリエイト販売") -> dict:
-    """無料モデルの配列不足を補い、必ず表示可能な形へ整える。"""
+def _build_creative_prompts(plan, article):
+    prompts = _build_creative_prompts_original(plan, article)
+    def clean_item(item):
+        if isinstance(item, list):
+            return [clean_item(x) for x in item]
+        if not isinstance(item, dict):
+            return item
+        result = dict(item)
+        for key in ('catch_copy', 'sub_copy', 'body_text', 'heading', 'prompt'):
+            if key in result:
+                result[key] = _review_safe_copy(result[key])
+        return result
+    return {key: clean_item(value) for key, value in prompts.items()}
+
+
+_REVIEW_CLAIM = re.compile(
+    r'(?:[0-9０-９][0-9０-９,，.．]*\s*円|送料無料|送料(?:が)?無料|'
+    r'ステージ\s*[0-9０-９ⅠⅡⅢⅣ]+|早期発見|早期がん|'
+    r'全身のがん|特許技術|検査精度|感度\s*[0-9０-９]|'
+    r'がんを(?:発見|診断|予防|治療)|お得な定期プラン|'
+    r'人間ドック(?:の代わり|に比べて))', re.I)
+
+
+def _review_safe_copy(value):
+    """Conservatively exclude unsupported claims; never claim factual verification."""
+    text = str(value or '')
+    parts = re.split(r'(?<=[。！？!?])|\n', text)
+    result = []
+    for part in parts:
+        part = part.strip()
+        if part and not _REVIEW_CLAIM.search(part):
+            result.append(part)
+    return '\n'.join(result).strip()
+
+
+def _strip_duplicate_tags(text, tags):
+    text = str(text or '').strip()
+    for tag in tags:
+        text = re.sub(r'(?<![\w#＃])' + re.escape(str(tag)) + r'(?![\w])', '', text)
+    return re.sub(r'\n[ \t]*\n[ \t]*\n+', '\n\n', text).strip()
+
+
+def _render_tags_once(text, tags):
+    tags = _as_list(tags)
+    clean = _strip_duplicate_tags(text, tags)
+    return clean + ('\n' + _hashtags(tags) if tags else '')
+
+
+def _normalize_social_plan(data, article, promotion_context='アフィリエイト販売', affiliate_url=''):
     if not isinstance(data, dict):
-        raise ValueError("SNS構成が正しい形式ではありません。")
-
-    data["x_posts"] = [_as_dict(item) for item in _as_list(data.get("x_posts"))]
-    data["x_image"] = _as_dict(data.get("x_image"))
-    for key in ("threads", "facebook", "line"):
-        data[key] = _as_dict(data.get(key))
-    for key in ("reel", "youtube", "tiktok"):
-        item = _as_dict(data.get(key), "caption")
-        item["scenes"] = [_as_dict(scene, "narration") for scene in _as_list(item.get("scenes"))]
-        data[key] = _ensure_video_scenes(item, key, article, promotion_context)
-
-    carousel = _as_dict(data.get("carousel"), "caption")
-    data["carousel"] = carousel
-    slides = [_as_dict(slide, "body") for slide in _as_list(carousel.get("slides"))]
-    article_sections = _article_sections(article)
+        raise ValueError('SNS構成が正しい形式ではありません。')
+    mark = _disclosure(promotion_context)
+    data['x_posts'] = [_as_dict(x) for x in _as_list(data.get('x_posts'))]
+    for post in data['x_posts']:
+        post['text'] = _mark_text(_ensure_link(_review_safe_copy(post.get('text')), affiliate_url), promotion_context)
+        post['hashtags'] = [t for t in _as_list(post.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
+    data['x_image'] = _as_dict(data.get('x_image'))
+    for key in ('threads', 'facebook', 'line'):
+        item = _as_dict(data.get(key))
+        base_text = item.get('text')
+        if key == 'line' and not re.sub(r'(?:【PR】|【商品案内】|https?://\S+|\s)+', '', str(base_text or '')):
+            base_text = _fallback_line(article)
+        item['text'] = _mark_text(_ensure_link(_review_safe_copy(base_text), affiliate_url), promotion_context)
+        item['hashtags'] = [t for t in _as_list(item.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
+        data[key] = item
+    carousel = _as_dict(data.get('carousel'), 'caption')
+    carousel['caption'] = _mark_text(_review_safe_copy(carousel.get('caption')), promotion_context)
+    carousel['hashtags'] = _five_hashtags([t for t in _five_hashtags(carousel.get('hashtags'), article)
+                                          if not _REVIEW_CLAIM.search(t)], article)
+    slides = [_as_dict(x, 'body') for x in _as_list(carousel.get('slides'))]
+    sections = _article_sections(article)
     while len(slides) < 9:
-        index = len(slides)
-        source = article_sections[min(index, len(article_sections) - 1)] if article_sections else {}
-        slides.append({
-            "title": source.get("heading", "まとめ" if index == 8 else f"ポイント{index + 1}"),
-            "body": source.get("summary", "記事の要点を分かりやすく確認しましょう。")[:80],
-            "visual": (
-                f"『{source.get('heading', '記事のポイント')}』の内容を理解または実践している日本人の読者。"
-                f"要点は『{source.get('summary', '記事の内容を確認する')}』。内容に合う場所、表情、動作、小物を具体的に描く"
-            ),
-        })
-    carousel["slides"] = slides[:9]
-    last_slide = carousel["slides"][8]
-    last_text = f"{last_slide.get('title', '')} {last_slide.get('body', '')}"
-    affiliate_mode = "アフィリエイト" in promotion_context or "両方" in promotion_context
-    store_only_without_url = (
-        "販売目的：院内・店舗販売" in promotion_context
-        and "案内先URL：未設定" in promotion_context
-    )
-    disclosure = "【PR】" if affiliate_mode else "【商品案内】"
-    if not any(word in last_text for word in ("プロフィール", "公式サイト", "購入", "相談", "店舗")):
-        last_slide["title"] = "自分に合うか確認しよう"
-        if store_only_without_url:
-            last_slide["body"] = f"気になる方は、ご来店時に院内スタッフへお気軽にお声がけください。{disclosure}"
-        else:
-            last_slide["body"] = f"商品が自分の悩みや希望に合いそうな方は、プロフィールの案内先から詳しく確認してみてください。{disclosure}"
-
-    data["creative_prompts"] = _build_creative_prompts(data, article)
+        idx = len(slides)
+        source = sections[min(idx, len(sections) - 1)] if sections else {}
+        slides.append({'title': source.get('heading', '記事のポイント'),
+                       'body': source.get('summary', '詳しい内容は記事をご確認ください。'),
+                       'visual': '記事の要点を表す具体的な日本の生活場面'})
+    slides = slides[:9]
+    for slide in slides:
+        slide['title'] = _review_safe_copy(slide.get('title')) or '記事のポイント'
+        slide['body'] = _review_safe_copy(slide.get('body')) or '詳しい内容は記事でご確認ください。'
+        slide['visual'] = _review_safe_copy(slide.get('visual')) or '記事の内容に沿った生活場面'
+    slides[-1]['title'] = '詳しく確認してみませんか'
+    slides[-1]['body'] = (('気になる方は、ご来店時にスタッフへご相談ください。' if _store_only(promotion_context)
+                          else '詳しくはプロフィールの案内先からご確認ください。') + mark)
+    carousel['slides'] = slides
+    data['carousel'] = carousel
+    for key in ('reel', 'youtube', 'tiktok'):
+        item = _as_dict(data.get(key), 'caption')
+        field = 'description' if key == 'youtube' else 'caption'
+        item[field] = _mark_text(_ensure_link(_review_safe_copy(item.get(field)),
+                                              affiliate_url if key == 'youtube' else ''), promotion_context)
+        if key == 'reel':
+            item['hashtags'] = _five_hashtags(item.get('hashtags'), article)
+        item['hashtags'] = [t for t in _as_list(item.get('hashtags')) if not _REVIEW_CLAIM.search(str(t))]
+        data[key] = _ensure_video_scenes(item, key, article, promotion_context)
+        for scene in data[key]['scenes']:
+            if scene.get('scene_type') == 'content':
+                scene['caption'] = _review_safe_copy(scene.get('caption')) or '記事のポイント'
+                scene['narration'] = _review_safe_copy(scene.get('narration')) or '詳しくは記事をご確認ください。'
+                scene['visual'] = _review_safe_copy(scene.get('visual')) or '記事の内容を紹介する明るい生活場面'
+    carousel['caption'] = _mark_text(_strip_affiliate_link(carousel.get('caption'), affiliate_url), promotion_context)
+    for media_key in ('reel', 'tiktok'):
+        media = _as_dict(data.get(media_key), 'caption')
+        media['caption'] = _mark_text(_strip_affiliate_link(media.get('caption'), affiliate_url), promotion_context)
+        data[media_key] = media
+    data['creative_prompts'] = _build_creative_prompts(data, article)
     return data
 
 
-def _generate_social_plan_legacy(client, model: str, article: str, call_llm, affiliate_url: str = "") -> dict:
-    prompt = f"""【完成記事からSNS投稿文・制作プロンプトを作成】
-以下の完成記事だけを情報源として、媒体ごとの投稿文、動画台本、画像・動画制作用プロンプトを作成してください。
+def _validate_social_plan(data):
+    required = ('x_posts', 'threads', 'facebook', 'line', 'carousel', 'reel',
+                'youtube', 'tiktok', 'creative_prompts')
+    missing = [k for k in required if k not in data]
+    if missing:
+        raise ValueError('SNS構成の不足項目：' + ', '.join(missing))
+    if len(_as_dict(data['carousel']).get('slides', [])) != 9:
+        raise ValueError('Instagramカルーセルが9枚ではありません。')
+    if not re.sub(r'(?:【PR】|【商品案内】|https?://\S+|\s)+', '', str(data.get('line', {}).get('text', ''))):
+        raise ValueError('LINE配信文に本文がありません。')
+    prompts = data['creative_prompts']
+    required_prompts = set(MEDIA_FILENAMES) | {'instagram_carousel', 'article_section_images'}
+    if required_prompts - set(prompts):
+        raise ValueError('画像・動画制作プロンプトが不足しています。')
+    if len(prompts['instagram_carousel']) != 9 or not prompts['article_section_images']:
+        raise ValueError('カルーセルまたは記事セクション画像が不足しています。')
+    for key in ('reel', 'youtube', 'tiktok'):
+        scenes = data[key].get('scenes', [])
+        if len(scenes) < 3 or sum(int(re.search(r'\d+', x['duration']).group()) for x in scenes) != 42:
+            raise ValueError(f'{key}の動画構成が42秒ではありません。')
 
-完成記事：
----
-{article}
----
 
-購入・詳細確認用URL：
-{affiliate_url or '未設定'}
+def _generate_social_plan_legacy(client, model, article, call_llm, affiliate_url=''):
+    return generate_social_plan(client, model, article, call_llm, affiliate_url=affiliate_url)
 
-共通条件：
-- 記事にない価格、数値、実績、口コミ、効果、人物、研究結果を追加しない
-- すべての投稿の冒頭または目立つ位置に「【PR】」を入れる
-- X、Facebook、Threads、LINE、YouTube概要欄にはURLを省略せず1回入れる
-- Instagram、リール、TikTokはURLに加え「プロフィールのリンクから確認」と案内する
-- 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
-- ハッシュタグは文字列配列にする
-- Instagramカルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人に自然に勧め、プロフィールのリンクへ案内する行動喚起
-- リール、TikTok、YouTubeはいずれも40〜45秒を目安にする
-- 動画台本の最初は0.0秒から表示する3.5〜4秒の表紙シーン、最後は3〜4秒の商品案内と購入導線のシーンにする
-- 記事で確認できた事実だけを使い、商品が向く人へ押し売りにならない自然な言葉で購入検討を促す
 
-画像プロンプト共通条件：
-- 必ず「広告・出版分野で経験豊富なプロのイラストレーターが制作する、細部まで丁寧で求心力のある商用イラスト」と明記
-- すべての画像プロンプトの冒頭に「キャンバスをイラスト表示エリアとテキスト専用エリアの2領域へ完全分離する」と明記する
-- 記事内容と読者の感情に合う人物、表情、仕草、背景、小物、光、配色、構図を具体的に指示
-- 清潔感、信頼感、親しみやすさを備え、ひと目でテーマが伝わる魅力的なビジュアル
-- 安価な素材集風、幼すぎる絵、単調な棒人間、過剰な誇張、不自然な手指、文字化けを避ける
-- 実在ブランドのロゴ、著名キャラクター、特定作家の画風を使用しない
-- 画像の中に、読者の目を止める短い日本語キャッチコピーを必ず入れる
-- キャッチコピーは一目で読める大きな太字。補足文は短くし、スマートフォンでも読める文字サイズにする
-- 文字と背景のコントラストを高くし、必要に応じて半透明帯、縁取り、影を使う
-- テキストをイラストの主役に直接重ねず、最初から「文字専用エリア」と「メインイラストエリア」を分けて設計する
-- 2つの領域は座標・比率・背景色で明確に区切り、互いの領域へ1ピクセルも侵入させない
-- イラスト表示エリアには人物・商品・背景・装飾だけを置き、文字・数字・記号・帯・吹き出しを一切置かない
-- テキスト専用エリアにはキャッチコピー・説明文・最小限の装飾だけを置き、人物・商品・重要なイラストを一切置かない
-- テキスト専用エリアは独立した無地または淡いグラデーション背景とし、境界線または十分な余白でイラスト表示エリアと区別する
-- メインイラストは画面全体の60〜70％を確保し、文字エリアは30〜40％以内に収める
-- 人物の顔、表情、手、商品、重要な小物は文字・帯・吹き出し・装飾で一切隠さない
-- 文字専用エリアには、無地または情報量の少ない淡い背景、独立したカード、上下の帯、左右のカラムを使う
-- 半透明帯を人物の上に被せる構図は禁止。文字量に応じて余白を広げ、文字を無理に縮小しない
-- キャッチコピーは原則8〜18文字、補足文は原則20〜45文字にまとめ、長文を画像内へ詰め込まない
-- 日本語は句読点または意味のまとまりで自然に改行し、助詞・助動詞・句読点を行頭に置かない
-- 単語、固有名詞、商品名、数字と単位の途中で改行せず、文字数だけを基準にした機械的な均等改行をしない
-- 横長画像は「文字35％＋イラスト65％」の左右分割、正方形は「上部文字25％＋中央イラスト55％＋下部補足20％」を基本にする
-- 生成後に、文字・文字背景・装飾がイラスト表示エリアへ越境していないか必ず検査し、越境があれば配置を修正して再生成する
-
-フォントと可読性の必須条件：
-- 日本語は視認性の高い太めのゴシック体を使用し、細字、極細字、筆記体、装飾過多の書体、明朝体の小文字を避ける
-- キャッチコピーはBold〜ExtraBold、説明文はMedium〜Boldを基本にする
-- 1200×630・1200×675の横長画像：キャッチコピー56〜72px、補足文30〜38pxを下限とする
-- 1080×1080の正方形画像：キャッチコピー64〜80px、補足文34〜44pxを下限とする
-- 1200×900の画像：キャッチコピー64〜82px、補足文36〜46pxを下限とする
-- 1080×1350のカルーセル：大見出し64〜80px、説明文36〜44pxを下限とする
-- 1280×720のYouTubeサムネイル：キャッチコピー80〜110px、補足文40〜52pxを下限とする
-- 1080×1920の縦型動画・表紙：冒頭コピー96〜120px、通常テロップ72〜88pxを下限とする
-- 1920×1080のYouTube動画：見出し88〜112px、通常テロップ64〜80pxを下限とする
-- 行間は文字サイズの1.25〜1.4倍、文字間隔は詰めすぎず、1行15〜18文字以内を基本にする
-- 文字が領域に収まらない場合、フォントを小さくせず文章を短く要約する。上記の最小サイズを下回らない
-- 背景とのコントラスト比を十分に確保し、白文字には濃色背景、濃色文字には明るい背景を使う
-- 生成後にスマートフォン表示を想定して縮小確認し、読みにくい場合は文字を大きくして再生成する
-- 指定した日本語を一字一句正確に描画し、誤字、文字化け、意味不明な記号、余分な文字を入れない
-- 日本語が崩れた場合は、正しい文章になるまで文字部分を修正・再生成するよう明記
-- カルーセル9枚は同じ人物設定・画風・カラーパレット・文字デザインで統一しつつ、構図を変えて単調さを防ぐ
-- カルーセルは各イラスト内に「大見出し」と「2〜4行の短い説明文」を直接入れる
-- カルーセル1枚目は強い表紙コピー、2〜8枚目は内容がすぐ分かる見出しと説明、9枚目は商品が向く人に自然に勧め「プロフィールのリンクから公式サイトを確認」と案内する
-- カルーセル各枚は「上部見出し18％・中央メインイラスト57％・下部説明カード25％」を基本レイアウトにする
-- 中央57％のメインイラスト領域には文字、帯、吹き出しを一切重ねず、主役が完全に見える状態にする
-- 上部18％と下部25％をテキスト専用エリア、中央57％をイラスト表示エリアとして固定し、領域間の越境を禁止する
-- 説明文が長い場合は内容を短く要約し、下部カードの中で最大4行に収める
-
-動画プロンプト共通条件：
-- 必ず「プロのイラストレーターと映像ディレクターが共同制作する、求心力のある高品質なイラスト動画」と明記
-- すべての動画プロンプトの冒頭に「各フレームを映像表示エリアとテロップ専用エリアへ完全分離する」と明記する
-- Instagram、YouTube、TikTokなどのSNS名、SNSロゴ、アプリアイコン、ユーザー名、保存ファイル名、拡張子を動画内に表示しない
-- SNS名は管理用の推奨保存ファイル名だけに使い、映像、背景、テロップ、字幕、エンドカードには入れない
-- 最初に3.5〜4秒の独立した表紙シーンを必ず設け、0.0秒から完成した表紙を表示し、黒画面・空白・待機・フェードインを入れない。キャッチコピーとイラストを落ち着いて確認できる時間を確保する
-- 表紙シーンに短く強い日本語キャッチコピーを大きく表示し、人物・商品と重ならない専用エリアへ配置する
-- 各シーンに45文字以内の日本語テロップを直接入れ、音声なしでも内容が伝わるようにする
-- テロップはスマートフォンで読める大きさ、高コントラスト、字幕用の安全余白を確保する
-- テロップは人物やメインイラストの上に重ねず、上部または下部の専用テロップ帯へ表示する
-- 映像表示エリアには人物・商品・背景だけを表示し、文字・字幕・帯・吹き出しを一切侵入させない
-- テロップ専用エリアには文字だけを表示し、人物の顔・手・商品・重要な映像を侵入させない
-- 縦型動画は「上部コピー帯20％・中央メイン映像55％・下部テロップ帯10％・SNS操作UI用余白15％」を基本にする
-- 縦型動画では右端12％と最下部15％に重要な文字や人物を置かない
-- YouTube横型動画は、人物を左右どちらかに寄せ、反対側の文字専用エリアへテロップを配置する
-- 1画面のテロップは原則2行以内・1行15文字前後とし、文章を詰め込まない
-- テロップは句読点または意味のまとまりで自然に改行し、助詞・助動詞・句読点を行頭に置かない
-- 単語、固有名詞、商品名、数字と単位の途中で改行せず、機械的な均等改行を禁止する
-- 全フレームで領域境界を固定し、テロップや背景帯が映像表示エリアへ越境した場合は修正して再生成する
-- 指定した日本語を一字一句正確に表示し、誤字や文字化けがあれば修正・再生成するよう明記
-- 不自然な身体変形、激しい点滅、過剰な動き、ロゴ、透かし、意味不明な文字を避ける
-- 人の声、音声ナレーション、読み上げ音声、会話音声は一切入れない
-- narration欄の文章は45文字以内のテロップにし、左から右へ1文字ずつ現れるタイピング演出で表示する
-- 1文字の表示間隔は0.04〜0.07秒、入力後は1.5〜2秒保持し、テロップ間の空白は最大0.2秒とする
-- 明るくポップで前向きな、著作権上利用可能なインストゥルメンタルBGMを動画全編に入れる
-- BGMは0.0秒から開始し、場面転換とタイピング演出を曲のリズムへ合わせ、終了時のみ自然にフェードアウトする
-- 音声ナレーションの混入、BGMの音切れ、暗い・不安・悲しい・重い曲調を禁止する
-- 最後に3〜4秒の商品案内シーンを必ず設け、向いている人へ自然に勧める。リール・TikTokはプロフィールのリンク、YouTubeは概要欄のリンクへ案内する
-- 最後の案内は【PR】を明示し、過度な煽り、効果保証、架空の限定性、強引な購入表現を使わない
-
-制作プロンプトの独立性：
-- creative_prompts内の各promptは、1件だけコピーしても成立する完全な指示文にする
-- 各画像promptには「イラスト表示エリアとテキスト専用エリアの完全分離」「各領域の比率」「越境禁止」「主役を隠さない」を必ず繰り返して明記する
-- 各画像promptには、その媒体の具体的なフォント種類・太さ・最低pxサイズ・行間・1行の文字数上限も必ず明記する
-- 各動画promptには「映像表示エリアとテロップ専用エリアの完全分離」「全フレームで境界固定」「SNS操作UIの安全余白」「越境時の再生成」を必ず繰り返して明記する
-- 各動画promptには、その媒体の拡大後の具体的なテロップ最低pxサイズ・太さ・最大行数・行間も必ず明記する
-- 各動画promptには「0.0秒から始まる3.5〜4秒の表紙シーンと大きなキャッチコピー」「自然な日本語改行」「3〜4秒の商品案内と購入導線」を必ず明記する
-- 各動画promptには「SNS名・ロゴ・保存ファイル名を画面に表示しない」「音声ナレーション禁止」「タイピング風テロップ」「明るくポップなBGM」「音切れ時の再生成」を必ず明記する
-- 「上記と同じ」「共通条件に従う」など、単独では意味が通じない省略表現を使わない
-
-次のJSON以外は出力しないでください：
+def generate_social_plan(client, model, article, call_llm, affiliate_url='',
+                         promotion_context='アフィリエイト販売'):
+    prompt = f'''あなたは日本語の広告・SNS制作の専門家です。次の完成記事だけを情報源に、投稿文と映像台本をJSONで返してください。
+記事中に記載された数値も裏付けが不明な場合はSNSで強調しないでください。価格・送料・ステージ別の検査性能・早期発見・特許・定期プラン・医療機関との比較は、記事に書かれていても公式一次資料の確認ができない限りSNS本文・画像文字・動画テロップに含めない。文章は助詞で途切れず一文を完結させる。ハッシュタグは本文に重複記載せず、別フィールドだけに置く。
+医療・健康・美容商品の診断・治療・予防効果を断定せず、架空の価格、送料、検査精度、口コミ、人物、限定性、認証を追加しない。
+検査サービスを医療機関での診断の代わりと表現しない。正式名称を変更しない。
+アフィリエイトなら全投稿に【PR】、店頭案内のみなら【商品案内】を表示。
+Xは異なる角度で3案。Instagramカルーセルは9枚で、表紙・悩み・要点・注意点・まとめ・CTAを重複なく整理。
+リール、YouTube、TikTokは各42秒、冒頭表紙と最後のCTAを含む5〜8シーンを作成。
+各sceneにscene_type、caption、narration（音声ではなく45文字以内の画面テロップ）、visualを入れる。
+テロップはナレーションなしのタイピング表示、明るいインストゥルメンタルBGM。記事にない描写を創作しない。
+カルーセルとリールのハッシュタグは5個。画像用の短い見出し、補足、具体的なvisualも作る。
+URLがある場合、X・Threads・Facebook・LINE・YouTubeの投稿に1回含める。Instagram・TikTokはプロフィール導線。
+店舗販売のみでURLがなければ院内相談へ案内し、URLを創作しない。
+制作品質基準：{COMMON_QUALITY}
+販売・案内条件：{promotion_context}
+購入・確認URL：{affiliate_url or '未設定'}
+完成記事：\n---\n{article}\n---
+JSONの形式：
 {{
-  "x_posts": [
-    {{"text": "投稿文", "hashtags": ["#タグ"]}},
-    {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}},
-    {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}}
-  ],
-  "threads": {{"text": "投稿文", "hashtags": ["#タグ"]}},
-  "facebook": {{"text": "詳しい投稿文", "hashtags": ["#タグ"]}},
-  "line": {{"text": "LINE配信用文"}},
-  "carousel": {{
-    "caption": "Instagramキャプション",
-    "hashtags": ["#タグ"],
-    "slides": [{{"title": "短い見出し", "body": "80文字以内の本文"}}]
-  }},
-  "reel": {{
-    "caption": "リールキャプション", "hashtags": ["#タグ"],
-    "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "字幕", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "direction": "画面指示"}}]
-  }},
-  "youtube": {{
-    "title": "タイトル", "description": "URLを含む概要欄", "hashtags": ["#タグ"],
-    "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "字幕", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "direction": "画面指示"}}]
-  }},
-  "tiktok": {{
-    "caption": "投稿文", "hashtags": ["#タグ"],
-    "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "字幕", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "direction": "画面指示"}}]
-  }},
-  "creative_prompts": {{
-    "x_image": {{"size": "1200×675", "catch_copy": "画像内に入れる短いキャッチコピー", "sub_copy": "画像内に入れる短い補足", "layout": "文字とメインイラストを重ねない具体的な配置", "font_spec": "太めゴシック。見出し56〜72px、補足30〜38px以上など", "prompt": "レイアウトとフォント指定をすべて含む完成プロンプト"}},
-    "facebook_eyecatch": {{"size": "1200×630", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "layout": "文字35％＋イラスト65％などの具体的配置", "font_spec": "太めゴシック。見出し56〜72px、補足30〜38px以上など", "prompt": "レイアウトとフォント指定をすべて含む完成プロンプト"}},
-    "threads_image": {{"size": "1080×1080", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "layout": "上部文字・中央イラスト・下部補足の具体的配置", "font_spec": "太めゴシック。見出し64〜80px、補足34〜44px以上など", "prompt": "レイアウトとフォント指定をすべて含む完成プロンプト"}},
-    "line_image": {{"size": "1200×900", "catch_copy": "画像内キャッチコピー", "sub_copy": "画像内補足", "layout": "文字とイラストを分離する具体的配置", "font_spec": "太めゴシック。見出し64〜82px、補足36〜46px以上など", "prompt": "レイアウトとフォント指定をすべて含む完成プロンプト"}},
-    "instagram_carousel": [
-      {{"slide": 1, "size": "1080×1350", "catch_copy": "イラスト内の大見出し", "body_text": "イラスト内に直接入れる2〜4行の説明文", "layout": "上部見出し18％・中央イラスト57％・下部説明カード25％。中央イラストへ文字を重ねない", "font_spec": "太めゴシック。大見出し64〜80px、説明36〜44px以上、行間1.25〜1.4倍", "prompt": "完全分離レイアウトとフォント指定を含む1枚単独で使える完成プロンプト"}}
-    ],
-    "reel_video": {{"size": "1080×1920", "duration": "40〜45秒", "catch_copy": "最初の表紙に入れるキャッチコピー", "layout": "上部コピー帯20％・中央映像55％・下部テロップ帯10％・UI余白15％", "font_spec": "太めゴシック。表紙96〜120px、通常テロップ72〜88px、最大2行", "prompt": "3.5〜4秒の表紙・自然な改行・音声なしのタイピング風テロップ・明るくポップなBGM・最後の商品案内まで含む完成動画プロンプト"}},
-    "youtube_thumbnail": {{"size": "1280×720", "catch_copy": "サムネイル内キャッチコピー", "sub_copy": "サムネイル内補足", "layout": "文字35％＋メインイラスト65％の左右分割", "font_spec": "太めゴシック。見出し80〜110px、補足40〜52px以上", "prompt": "完全分離レイアウトとフォント指定を含む完成プロンプト"}},
-    "youtube_video": {{"size": "1920×1080", "duration": "40〜45秒", "catch_copy": "最初の表紙に入れるキャッチコピー", "layout": "人物と文字を左右に分離し、字幕は下部専用帯", "font_spec": "太めゴシック。表紙88〜112px、通常テロップ64〜80px、最大2行", "prompt": "3.5〜4秒の表紙・自然な改行・音声なしのタイピング風テロップ・明るくポップなBGM・最後の商品案内まで含む完成動画プロンプト"}},
-    "tiktok_cover": {{"size": "1080×1920", "catch_copy": "表紙内キャッチコピー", "sub_copy": "表紙内補足", "layout": "上部文字20％・中央イラスト60％・下部補足5％・UI余白15％", "font_spec": "太めゴシック。見出し72〜96px、補足48〜60px以上", "prompt": "完全分離レイアウトとフォント指定を含む完成プロンプト"}},
-    "tiktok_video": {{"size": "1080×1920", "duration": "40〜45秒", "catch_copy": "最初の表紙に入れるキャッチコピー", "layout": "上部コピー帯20％・中央映像55％・下部テロップ帯10％・UI余白15％", "font_spec": "太めゴシック。表紙96〜120px、通常テロップ72〜88px、最大2行", "prompt": "3.5〜4秒の表紙・自然な改行・音声なしのタイピング風テロップ・明るくポップなBGM・最後の商品案内まで含む完成動画プロンプト"}}
-  }}
-}}"""
+"x_posts":[{{"text":"","hashtags":["#タグ"]}},{{"text":"","hashtags":["#タグ"]}},{{"text":"","hashtags":["#タグ"]}}],
+"x_image":{{"title":"","body":"","visual":""}},
+"threads":{{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""}},
+"facebook":{{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""}},
+"line":{{"text":"","image_title":"","image_body":"","visual":""}},
+"carousel":{{"caption":"","hashtags":["#タグ"],"slides":[{{"title":"","body":"","visual":""}}]}},
+"reel":{{"caption":"","hashtags":["#タグ"],"cover_title":"","cover_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}},
+"youtube":{{"title":"","description":"","hashtags":["#タグ"],"thumbnail_title":"","thumbnail_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}},
+"tiktok":{{"caption":"","hashtags":["#タグ"],"cover_title":"","cover_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}}
+}}
+JSON以外を出力しない。'''
     last_error = None
     for attempt in range(2):
-        retry_note = "" if not attempt else "\n前回はJSONが不完全でした。文章量を調整し、必ず最後まで有効なJSONで出力してください。"
-        raw = call_llm(
-            client, model, prompt + retry_note, 20_000,
-            response_mime_type="application/json", temperature=0.4,
-        )
         try:
-            data = _load_json_response(raw)
-            data = _normalize_social_plan(data, article)
+            raw = call_llm(client, model, prompt + ('\n前回のJSONが不完全でした。短く有効なJSONを返してください。' if attempt else ''),
+                           16000, response_mime_type='application/json', temperature=0.35)
+            data = _normalize_social_plan(_load_json_response(raw), article, promotion_context, affiliate_url)
             _validate_social_plan(data)
             return data
-        except (json.JSONDecodeError, ValueError) as exc:
+        except (ValueError, json.JSONDecodeError) as exc:
             last_error = exc
-    raise ValueError(f"SNS投稿文と制作プロンプトを完成できませんでした：{last_error}")
+    raise ValueError(f'SNS投稿文と制作プロンプトを完成できませんでした：{last_error}')
 
 
-def generate_social_plan(
-    client, model: str, article: str, call_llm, affiliate_url: str = "",
-    promotion_context: str = "アフィリエイト販売",
-) -> dict:
-    prompt = f"""【完成記事からSNS投稿文・動画台本を作成】
-あなたは、読者心理・購買行動・媒体特性を熟知したプロのマーケティングコンサルタントであり、
-広告・出版分野で経験豊富なプロのイラストレーター兼映像ディレクターです。
-以下の完成記事だけを情報源として、各SNS向けコンテンツをJSONで作成してください。
-
-制作時の共通基準（JSONの見出し・説明・場面指定にも反映）：
-{COMMON_QUALITY}
-
-完成記事：
----
-{article}
----
-
-購入・詳細確認用URL：
-{affiliate_url or '未設定'}
-
-販売・案内条件：
-{promotion_context}
-
-厳格な条件：
-- 記事にない数値、実績、料金、資格、口コミ、効果、人物、店舗情報、研究結果を追加しない
-- 医療・健康・美容情報を断定せず、過度な煽り、効果保証、架空の限定性を使わない
-- 販売目的にアフィリエイトを含む場合は、すべての投稿の冒頭または目立つ位置に「【PR】」を入れる
-- 院内・店舗販売だけの場合は「【商品案内】」など実態に合う表示にし、アフィリエイト広告であると偽らない
-- URLが設定されている場合は、X、Facebook、Threads、LINE、YouTube概要欄に購入・詳細確認URLを省略せず1回入れる
-- URLが設定されている場合は、Instagram、リール、TikTokで「プロフィールのリンクから確認」と自然に案内する
-- URLが未設定の院内・店舗販売ではURLやプロフィールリンクを創作せず、「院内でスタッフへお声がけください」「ご来店時にご相談ください」と案内する
-- 同じ文章を使い回さず、媒体ごとの閲覧行動に最適化する
-- ハッシュタグは文字列配列にする
-- カルーセルは必ず9枚。1枚目は表紙、9枚目は商品が向く人への自然な案内と、設定された購入方法に合う行動喚起
-- カルーセル9枚だけで完成記事の要点を順序よく理解できる構成にする。2枚目で読者の悩み・現状、3〜8枚目で原因・知識・方法・注意点・メリットなど記事の主要点を重複なく割り当てる
-- カルーセル各枚のtitle、body、visualは必ず同じ記事要点を表す。全9枚で同じ主人公・画風・色設計を保ち、表情、動作、背景、小物、構図は各要点に合わせて変える
-- リール、TikTok、YouTubeはいずれも40〜45秒程度、5〜7シーンとする
-- 動画の最初は3.5〜4秒の表紙、最後は3〜4秒の商品案内。中間シーンは4〜6秒を目安にする
-- 動画は完成記事を短く要約する。表紙→悩み・問題提起→原因→解決策・ポイント→商品・サービス紹介→CTAを基本にし、記事にない段階は捏造せず省略・再構成する
-- 動画各シーンのcaption、narration、visualは必ず同じ記事要点を表し、記事と無関係な汎用場面や同じ構図の繰り返しを避ける
-- 人の声や音声ナレーションは使用しない。narration欄には、動画内でタイピング風に表示する日本語テロップ本文を入れる
-- テロップ本文は1シーンで読み切れる45文字以内の短文にし、見出しと同じ文章を繰り返さない
-- テロップ間の空白を最大0.2秒にできる構成とし、不要な間や長い余韻を作らない
-- captionは上部に表示する短い場面見出し、narrationは音声にせず下部にタイピング表示する文章、visualは人物・表情・視線・動作・場所・背景・小物・光が分かる具体的な場面説明
-- 上部見出しと下部テロップに同じ文章を重複させない
-- 画面テキストは日本語の文節と意味のまとまりで自然に改行できる長さにする。単語途中の分割、助詞・句読点の行頭、1文字だけの行を避ける
-- 改行後は各行の見た目の長さを近づけ、中央揃えで視覚的な重心が偏らない短文にする
-- visualは単なる「笑顔の人物」「商品を見る人」で終わらせず、記事要点との関係が視覚的に分かる場面にする
-- visualは明るいハイキー光、清潔感、親しみやすい日本の生活環境を基本にし、記事にない事実や効果を絵で追加しない
-- 商品名・店舗名・サービス名は商品ページと完成記事の正式表記を一字一句守り、略称・英語表記・別名称へ勝手に変更しない
-- 最後にプロのマーケティングコンサルタントとして、訴求力、媒体適合、広告表記、自然な購入導線、事実性を確認する
-- 最後にプロのグラフィックデザイナー、プロのイラストレーター、SNSマーケティング担当者として、即時理解、魅力、場面の具体性、文字量、自然な改行、構図、保存・シェア・購入への導線を確認する
-- 1項目でも不十分なら内部で修正し、検品済みのJSONだけを出力する
-- JSONを途中で省略せず、次の形式以外は出力しない
-
-{{
-  "x_posts": [
-    {{"text": "投稿文", "hashtags": ["#タグ"]}},
-    {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}},
-    {{"text": "別角度の投稿文", "hashtags": ["#タグ"]}}
-  ],
-  "x_image": {{"title": "短い見出し", "body": "60文字以内の説明", "visual": "具体的な場面"}},
-  "threads": {{"text": "投稿文", "hashtags": ["#タグ"], "image_title": "短い見出し", "image_body": "60文字以内", "visual": "具体的な場面"}},
-  "facebook": {{"text": "詳しい投稿文", "hashtags": ["#タグ"], "image_title": "短い見出し", "image_body": "60文字以内", "visual": "具体的な場面"}},
-  "line": {{"text": "販売目的に合うLINE配信用文", "image_title": "短い見出し", "image_body": "80文字以内", "visual": "具体的な場面"}},
-  "carousel": {{"caption": "Instagramキャプション", "hashtags": ["#タグ"], "slides": [{{"title": "短い見出し", "body": "80文字以内", "visual": "具体的な場面"}}]}},
-  "reel": {{"caption": "リール投稿文", "hashtags": ["#タグ"], "cover_title": "表紙見出し", "cover_body": "短い補足", "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "上部見出し", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "visual": "具体的な場面"}}]}},
-  "youtube": {{"title": "タイトル", "description": "URLを含む概要欄", "hashtags": ["#タグ"], "thumbnail_title": "サムネイル見出し", "thumbnail_body": "短い補足", "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "上部見出し", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "visual": "具体的な場面"}}]}},
-  "tiktok": {{"caption": "投稿文", "hashtags": ["#タグ"], "cover_title": "表紙見出し", "cover_body": "短い補足", "scenes": [{{"scene_type": "opening_cover/content/affiliate_cta", "duration": "秒数", "caption": "上部見出し", "narration": "音声にせずタイピング表示する45文字以内のテロップ本文", "visual": "具体的な場面"}}]}}
-}}"""
-    last_error = None
-    for attempt in range(2):
-        retry = "" if not attempt else "\n前回はJSONが不完全でした。文章量を調整し、必ず最後まで有効なJSONで出力してください。"
-        raw = call_llm(
-            client, model, prompt + retry, 16_000,
-            response_mime_type="application/json", temperature=0.35,
-        )
-        try:
-            data = _normalize_social_plan(_load_json_response(raw), article, promotion_context)
-            _validate_social_plan(data)
-            return data
-        except (json.JSONDecodeError, ValueError) as exc:
-            last_error = exc
-    raise ValueError(f"SNS投稿文と制作プロンプトを完成できませんでした：{last_error}")
-
-
-def social_text(plan: dict) -> str:
+def social_text(plan):
     plan = _as_dict(plan)
-    parts = ["X（旧Twitter）投稿案"]
-    for index, raw_post in enumerate(_as_list(plan.get("x_posts")), 1):
-        post = _as_dict(raw_post)
-        parts.append(f"\n【パターン{index}】\n{post.get('text', '')}\n{_hashtags(post.get('hashtags'))}")
-    for key, label in (("threads", "Threads"), ("facebook", "Facebook")):
+    parts = ['X（旧Twitter）投稿案']
+    for index, raw in enumerate(_as_list(plan.get('x_posts')), 1):
+        post = _as_dict(raw)
+        parts.append(f'\n【パターン{index}】\n' + _render_tags_once(post.get('text', ''), post.get('hashtags', [])))
+    for key, label in (('threads', 'Threads'), ('facebook', 'Facebook')):
         item = _as_dict(plan.get(key))
-        parts.append(f"\n\n{label}投稿\n{item.get('text', '')}\n{_hashtags(item.get('hashtags'))}")
-    parts.append(f"\n\nLINE配信文\n{_as_dict(plan.get('line')).get('text', '')}")
-    carousel = _as_dict(plan.get("carousel"), "caption")
-    parts.append(f"\n\nInstagram投稿\n{carousel.get('caption', '')}\n{_hashtags(carousel.get('hashtags'))}")
-    for key, label in (("reel", "Instagramリール"), ("youtube", "YouTube"), ("tiktok", "TikTok")):
-        item = _as_dict(plan.get(key), "caption")
-        parts.append(f"\n\n{label}\n{item.get('title', '')}\n{item.get('caption', item.get('description', ''))}\n{_hashtags(item.get('hashtags'))}")
-    return "\n".join(parts).strip()
+        parts.append(f'\n\n{label}投稿\n' + _render_tags_once(item.get('text', ''), item.get('hashtags', [])))
+    parts.append(f'\n\nLINE配信文\n{_as_dict(plan.get("line")).get("text", "")}')
+    carousel = _as_dict(plan.get('carousel'), 'caption')
+    parts.append('\n\nInstagram投稿\n' + _render_tags_once(carousel.get('caption', ''), carousel.get('hashtags', [])))
+    for key, label in (('reel', 'Instagramリール'), ('youtube', 'YouTube'), ('tiktok', 'TikTok')):
+        item = _as_dict(plan.get(key), 'caption')
+        parts.append(f'\n\n{label}\n{item.get("title", "")}\n' + _render_tags_once(item.get('caption', item.get('description', '')), item.get('hashtags', [])))
+    return '\n'.join(parts).strip()
 
 
-def creative_prompt_text(plan: dict) -> str:
-    plan = _as_dict(plan)
-    prompts = _as_dict(plan.get("creative_prompts"))
-    labels = (
-        ("product_promo_image", "商品紹介画像"),
-        ("store_pop_image", "店内POP画像"),
-        ("x_image", "X投稿画像"),
-        ("facebook_eyecatch", "Facebookアイキャッチ"),
-        ("threads_image", "Threads投稿画像"),
-        ("line_image", "LINE配信用画像"),
-        ("reel_cover", "Instagramリール表紙"),
-        ("reel_video", "Instagramリール動画"),
-        ("youtube_thumbnail", "YouTubeサムネイル"),
-        ("youtube_video", "YouTube動画"),
-        ("tiktok_cover", "TikTok表紙"),
-        ("tiktok_video", "TikTok動画"),
-    )
-    parts = ["画像・動画制作用プロンプト"]
+def creative_prompt_text(plan):
+    prompts = _as_dict(_as_dict(plan).get('creative_prompts'))
+    labels = [('product_promo_image', '商品紹介画像'), ('store_pop_image', '店内POP画像'),
+              ('x_image', 'X投稿画像'), ('facebook_eyecatch', 'Facebookアイキャッチ'),
+              ('threads_image', 'Threads投稿画像'), ('line_image', 'LINE配信用画像'),
+              ('reel_cover', 'Instagramリール表紙'), ('reel_video', 'Instagramリール動画'),
+              ('youtube_thumbnail', 'YouTubeサムネイル'), ('youtube_video', 'YouTube動画'),
+              ('tiktok_cover', 'TikTok表紙'), ('tiktok_video', 'TikTok動画')]
+    parts = ['画像・動画制作用プロンプト']
     for key, label in labels:
-        item = _as_dict(prompts.get(key), "prompt")
-        parts.append(
-            f"\n\n## {label}\nサイズ：{item.get('size', '')}\n"
-            f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
-            f"画像・動画内キャッチコピー：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
-            f"画像内補足：{item.get('sub_copy', '')}\n"
-            f"レイアウト：{item.get('layout', '')}\n"
-            f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
-        )
-    parts.append("\n\n## Instagramカルーセル9枚")
-    for raw_item in _as_list(prompts.get("instagram_carousel")):
-        item = _as_dict(raw_item, "prompt")
-        parts.append(
-            f"\n\n### {item.get('slide', '')}枚目\nサイズ：{item.get('size', '')}\n"
-            f"推奨保存ファイル名：{item.get('output_filename', '')}\n"
-            f"イラスト内の大見出し：{item.get('catch_copy', item.get('overlay_text', ''))}\n"
-            f"イラスト内の説明文：{item.get('body_text', '')}\n"
-            f"レイアウト：{item.get('layout', '')}\n"
-            f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
-        )
-    parts.append("\n\n## ブログ記事の各セクション用イラスト")
-    for raw_item in _as_list(prompts.get("article_section_images")):
-        item = _as_dict(raw_item, "prompt")
-        parts.append(
-            f"\n\n### セクション{item.get('section', '')}｜{item.get('heading_level', '')}：{item.get('heading', '')}\n"
-            f"サイズ：{item.get('size', '')}\n推奨保存ファイル名：{item.get('output_filename', '')}\n"
-            f"画像内キャッチコピー：{item.get('catch_copy', '')}\n"
-            f"画像内補足：{item.get('sub_copy', '')}\nレイアウト：{item.get('layout', '')}\n"
-            f"フォント指定：{item.get('font_spec', '')}\n{item.get('prompt', '')}"
-        )
-    return "\n".join(parts).strip()
+        item = _as_dict(prompts.get(key), 'prompt')
+        parts.append(f'\n\n## {label}\nサイズ：{item.get("size", "")}\n'
+                     f'推奨保存ファイル名：{item.get("output_filename", "")}\n'
+                     f'画像・動画内キャッチコピー：{item.get("catch_copy", "")}\n'
+                     f'画像内補足：{item.get("sub_copy", "")}\n'
+                     f'レイアウト：{item.get("layout", "")}\n'
+                     f'フォント指定：{item.get("font_spec", "")}\n{item.get("prompt", "")}')
+    parts.append('\n\n## Instagramカルーセル9枚')
+    for raw in _as_list(prompts.get('instagram_carousel')):
+        item = _as_dict(raw, 'prompt')
+        parts.append(f'\n\n### {item.get("slide", "")}枚目\nサイズ：{item.get("size", "")}\n'
+                     f'推奨保存ファイル名：{item.get("output_filename", "")}\n'
+                     f'イラスト内の大見出し：{item.get("catch_copy", "")}\n'
+                     f'イラスト内の説明文：{item.get("body_text", "")}\n'
+                     f'レイアウト：{item.get("layout", "")}\n'
+                     f'フォント指定：{item.get("font_spec", "")}\n{item.get("prompt", "")}')
+    parts.append('\n\n## ブログ記事の各セクション用イラスト')
+    for raw in _as_list(prompts.get('article_section_images')):
+        item = _as_dict(raw, 'prompt')
+        parts.append(f'\n\n### セクション{item.get("section", "")}｜{item.get("heading_level", "")}：{item.get("heading", "")}\n'
+                     f'サイズ：{item.get("size", "")}\n推奨保存ファイル名：{item.get("output_filename", "")}\n'
+                     f'画像内キャッチコピー：{item.get("catch_copy", "")}\n'
+                     f'画像内補足：{item.get("sub_copy", "")}\nレイアウト：{item.get("layout", "")}\n'
+                     f'フォント指定：{item.get("font_spec", "")}\n{item.get("prompt", "")}')
+    return '\n'.join(parts).strip()

@@ -5,10 +5,42 @@ on:
   schedule:
     # 日本時間 毎月5日・15日・25日 午前9時
     - cron: '0 0 5,15,25 * *'
+
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'テストのみ（WordPressには保存しない）'
+        required: true
+        type: boolean
+        default: true
+      test_gemini:
+        description: 'Gemini接続テストを実行する'
+        required: true
+        type: boolean
+        default: true
+      regenerate_creative:
+        description: '保存済み記事の制作プロンプトのみ再生成（記事は新規作成しない）'
+        required: true
+        type: boolean
+        default: false
+      existing_post_id:
+        description: '再生成するWordPress記事ID（例：1016）'
+        required: false
+        type: string
+        default: ''
+      safe_patch_check:
+        description: 'SNS修正を安全確認する（記事生成は行わない）'
+        required: true
+        type: boolean
+        default: false
+      apply_safe_patch:
+        description: '安全確認後にSNS修正を保存する（safe_patch_checkもオンにする）'
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: affiliate-auto-generator
@@ -22,6 +54,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -29,17 +63,238 @@ jobs:
           python-version: '3.11'
           cache: pip
 
+      - name: Validate safe patch selection
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          SAFE_PATCH_CHECK: ${{ inputs.safe_patch_check }}
+          APPLY_SAFE_PATCH: ${{ inputs.apply_safe_patch }}
+          REGENERATE_CREATIVE: ${{ inputs.regenerate_creative }}
+        run: |
+          python - <<'PY'
+          import os
+          check = os.environ['SAFE_PATCH_CHECK'] == 'true'
+          apply = os.environ['APPLY_SAFE_PATCH'] == 'true'
+          regen = os.environ['REGENERATE_CREATIVE'] == 'true'
+          if apply and not check:
+              raise SystemExit('apply_safe_patch requires safe_patch_check=true')
+          if check and regen:
+              raise SystemExit('Do not combine safe patch with regenerate_creative')
+          PY
+
+      - name: Check safe patch on temporary copy
+        if: github.event_name == 'workflow_dispatch' && inputs.safe_patch_check
+        run: |
+          python - <<'PY'
+          import ast
+          import pathlib
+          import subprocess
+          import sys
+          import tempfile
+
+          source = pathlib.Path('social_tools.py')
+          patch = pathlib.Path('social_tools_safe_patch.py')
+
+          if not source.is_file() or not patch.is_file():
+              raise SystemExit(
+                  'Required social_tools.py or social_tools_safe_patch.py is missing'
+              )
+
+          original = source.read_text(encoding='utf-8')
+
+          def function_names(code):
+              return [
+                  node.name
+                  for node in ast.parse(code).body
+                  if isinstance(
+                      node,
+                      (ast.FunctionDef, ast.AsyncFunctionDef)
+                  )
+              ]
+
+          original_names = function_names(original)
+
+          with tempfile.TemporaryDirectory() as folder:
+              target = pathlib.Path(folder) / 'social_tools.py'
+              target.write_text(original, encoding='utf-8')
+
+              subprocess.run(
+                  [
+                      sys.executable,
+                      str(patch.resolve()),
+                      str(target)
+                  ],
+                  check=True
+              )
+
+              updated = target.read_text(encoding='utf-8')
+              updated_names = function_names(updated)
+
+              # Preserve every existing function in its original order.
+              # Permit only the explicitly approved helper functions.
+              approved_new_functions = {
+                  '_strip_affiliate_link',
+                  '_build_creative_prompts_original',
+              }
+
+              if len(updated_names) != len(set(updated_names)):
+                  raise SystemExit(
+                      'Duplicate function names detected; refusing patch'
+                  )
+
+              unexpected = [
+                  name
+                  for name in updated_names
+                  if name not in original_names
+                  and name not in approved_new_functions
+              ]
+
+              if unexpected:
+                  raise SystemExit(
+                      'Unexpected new functions: ' + ', '.join(unexpected)
+                  )
+
+              preserved_order = [
+                  name
+                  for name in updated_names
+                  if name in original_names
+              ]
+
+              if preserved_order != original_names:
+                  raise SystemExit(
+                      'Existing functions removed or reordered; refusing patch'
+                  )
+
+              backup = target.with_suffix('.py.bak')
+
+              if updated != original:
+                  if not backup.is_file():
+                      raise SystemExit('Backup file is missing')
+                  if backup.read_text(encoding='utf-8') != original:
+                      raise SystemExit('Backup differs from original')
+
+              compile(updated, str(target), 'exec')
+
+              print('Safe patch dry validation passed.')
+              print('All existing function names preserved.')
+              print('Only approved helper functions may be added.')
+              print('Python syntax valid.')
+          PY
+
+      - name: Apply safe patch and commit to feature branch
+        if: github.event_name == 'workflow_dispatch' && inputs.safe_patch_check && inputs.apply_safe_patch
+        env:
+          GH_REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          if [ "$GH_REF_NAME" != 'feature-affiliate-sns' ]; then
+            echo 'Patch can only be committed on feature-affiliate-sns' >&2
+            exit 1
+          fi
+
+          python social_tools_safe_patch.py social_tools.py
+          python -m py_compile social_tools.py
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git add -- social_tools.py
+
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+          else
+            git commit -m 'Safely normalize affiliate SNS links'
+            git push origin "HEAD:${GH_REF_NAME}"
+          fi
+
       - name: Install dependencies
+        if: github.event_name == 'schedule' || !inputs.safe_patch_check
         run: pip install -r requirements.txt
 
+      - name: Check Python syntax
+        if: github.event_name == 'schedule' || !inputs.safe_patch_check
+        run: |
+          python -m py_compile auto_pipeline.py
+          python -m py_compile auto_creative.py
+          python -m py_compile social_tools.py
+          python -m py_compile article_history.py
+          python -m py_compile product_registry.py
+          python -m py_compile retry_creative.py
+
       - name: Check registered products
+        if: github.event_name == 'schedule' || !inputs.safe_patch_check
         env:
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
         run: |
-          python -c "from product_registry import read_items; items = read_items(); print('Registered products:', len(items)); print('Enabled products:', sum(bool(x.get('enabled', True)) for x in items))"
+          python - <<'PY'
+          from product_registry import read_items
+          items = read_items()
+          print('Registered products:', len(items))
+          print(
+              'Enabled products:',
+              sum(bool(x.get('enabled', True)) for x in items)
+          )
+          PY
 
-      - name: Generate affiliate drafts
+      - name: Test Gemini connection
+        if: github.event_name == 'workflow_dispatch' && !inputs.safe_patch_check && inputs.test_gemini && !inputs.regenerate_creative
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python - <<'PY'
+          from auto_pipeline import llm, gemini_model
+          model = gemini_model()
+          print('Testing Gemini model:', model, flush=True)
+          result = llm(
+              '接続確認です。「接続成功」とだけ日本語で回答してください。',
+              max_tokens=100
+          )
+          print('Gemini response:', result, flush=True)
+          print('Gemini connection test passed.', flush=True)
+          PY
+
+      - name: Regenerate creative prompts from existing WordPress draft
+        if: github.event_name == 'workflow_dispatch' && !inputs.safe_patch_check && inputs.regenerate_creative
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          WP_SITE_URL: ${{ secrets.WP_URL }}
+          WP_USERNAME: ${{ secrets.WP_USERNAME }}
+          WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_HISTORY_TOKEN: ${{ github.token }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          EXISTING_POST_ID: ${{ inputs.existing_post_id }}
+        run: |
+          python - <<'PY'
+          import os
+          import re
+          import subprocess
+
+          post_id = os.environ.get(
+              'EXISTING_POST_ID', ''
+          ).strip()
+
+          if not re.fullmatch(r'[1-9][0-9]*', post_id):
+              raise SystemExit(
+                  'A positive numeric WordPress post ID is required'
+              )
+
+          subprocess.run(
+              [
+                  'python',
+                  'retry_creative.py',
+                  '--post-id',
+                  post_id
+              ],
+              check=True
+          )
+          PY
+
+      - name: Generate affiliate drafts and creative prompts
+        if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.safe_patch_check && !inputs.regenerate_creative)
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
@@ -47,5 +302,107 @@ jobs:
           WP_USERNAME: ${{ secrets.WP_USERNAME }}
           WP_APP_PASSWORD: ${{ secrets.WP_APP_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.AFFILIATE_GITHUB_TOKEN }}
-          GITHUB_REPOSITORY: pontenene-hash/affiliate_content_generator
-        run: python auto_pipeline.py --limit 5
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GH_HISTORY_TOKEN: ${{ github.token }}
+          GITHUB_BRANCH: ${{ github.ref_name }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import sys
+          from auto_pipeline import run_batch
+
+          dry_run = (
+              os.environ.get('DRY_RUN', 'false').lower()
+              == 'true'
+          )
+
+          event_name = os.environ.get(
+              'GITHUB_EVENT_NAME', ''
+          )
+
+          limit = (
+              1 if event_name == 'workflow_dispatch'
+              else 5
+          )
+
+          print('GitHub event:', event_name, flush=True)
+          print('Dry run:', dry_run, flush=True)
+          print('Article limit:', limit, flush=True)
+
+          result = run_batch(
+              limit=limit,
+              dry_run=dry_run
+          )
+
+          print(
+              json.dumps(
+                  result,
+                  ensure_ascii=False,
+                  indent=2
+              ),
+              flush=True
+          )
+
+          with open(
+              'affiliate_run_report.json',
+              'w',
+              encoding='utf-8'
+          ) as f:
+              json.dump(
+                  result,
+                  f,
+                  ensure_ascii=False,
+                  indent=2
+              )
+
+          errors = [
+              item
+              for item in result.get('results', [])
+              if (
+                  item.get('status')
+                  in ('error', 'manual_link_required')
+                  or str(
+                      item.get('creative', '')
+                  ).startswith('error:')
+              )
+          ]
+
+          if errors:
+              print(
+                  'ERROR: Article or creative generation failed.',
+                  file=sys.stderr
+              )
+              sys.exit(1)
+
+          print(
+              'Completed articles:',
+              result.get('processed', 0),
+              flush=True
+          )
+
+          if dry_run:
+              print(
+                  'Test completed. No WordPress draft was created.',
+                  flush=True
+              )
+          PY
+
+      - name: Upload run report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliate-run-report-${{ github.run_number }}
+          path: affiliate_run_report.json
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload creative prompt files
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliate-creative-prompts-${{ github.run_number }}
+          path: creative_outputs/
+          retention-days: 30
+          if-no-files-found: ignore
