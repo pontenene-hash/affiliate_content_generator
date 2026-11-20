@@ -1,0 +1,75 @@
+
+name: Affiliate V5 Safety Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-v5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile affiliate_quality_v5.py
+          python -m py_compile install_affiliate_quality_v5.py
+          python -m py_compile test_affiliate_quality_v5.py
+          python -m py_compile auto_creative.py
+
+      - name: Run V5 quality tests
+        run: |
+          python -m unittest discover -s . -p 'test_affiliate_quality_v5.py' -v
+
+      - name: Test installer on temporary copy
+        run: |
+          python - <<'PY'
+          import pathlib
+          import subprocess
+          import sys
+          import tempfile
+
+          source = pathlib.Path("auto_creative.py")
+
+          with tempfile.TemporaryDirectory() as folder:
+              target = pathlib.Path(folder) / "auto_creative.py"
+              target.write_bytes(source.read_bytes())
+
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "install_affiliate_quality_v5.py",
+                      str(target)
+                  ],
+                  check=True
+              )
+
+              updated = target.read_text(encoding="utf-8")
+              assert "AFFILIATE_QUALITY_V5_HOOK" in updated
+
+              backup = target.with_suffix(".py.v5.bak")
+              assert backup.exists()
+              assert backup.read_bytes() == source.read_bytes()
+
+              subprocess.run(
+                  [
+                      sys.executable,
+                      "install_affiliate_quality_v5.py",
+                      str(target)
+                  ],
+                  check=True
+              )
+
+              print("V5 installer safety test passed")
+          PY
