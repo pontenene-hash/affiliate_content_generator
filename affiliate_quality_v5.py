@@ -35,15 +35,22 @@ def safe_sentences(value, fallback=FALLBACK):
 
 
 def short_copy(value, maximum, fallback):
+    """Keep complete sentences; never truncate at a comma or mid-sentence."""
+    if maximum <= 0:
+        return ''
     text = re.sub(r'\s+', ' ', safe_sentences(value, fallback)).strip()
     if len(text) <= maximum:
         return text
-    boundaries = [m.end() for m in re.finditer(r'[。！？、，\s]', text[:maximum])]
-    if boundaries and boundaries[-1] >= 6:
-        candidate = text[:boundaries[-1]].rstrip('、， ')
-        if candidate:
-            return candidate
-    return fallback[:maximum]
+    sentences = re.findall(r'[^。！？!?]+[。！？!?]', text)
+    result = ''
+    for sentence in sentences:
+        sentence = sentence.strip()
+        if len(result) + len(sentence) > maximum:
+            break
+        result += sentence
+    if result:
+        return result
+    return fallback if len(fallback) <= maximum else fallback[:maximum]
 
 
 def normalize_post(value, affiliate_url='', include_url=False, disclosure='【PR】'):
