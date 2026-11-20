@@ -1,5 +1,6 @@
 
 """Optional scheduled affiliate workflow. Never fabricates affiliate tracking links."""
+
 import hashlib
 import json
 import os
@@ -13,6 +14,7 @@ from urllib.parse import urlparse
 import requests
 from bs4 import BeautifulSoup
 from google import genai
+
 
 GENRES = [
     'コスメ・スキンケア',
@@ -29,8 +31,14 @@ GENRES = [
 TIMEOUT = 25
 
 # Gemini APIモデル
-# GitHub Actionsのエラーログで案内されたモデル
 DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
+
+# SEO記事の目標文字数
+ARTICLE_MIN_CHARS = 5000
+ARTICLE_MAX_CHARS = 8000
+
+# 長文記事に対応する出力トークン上限
+ARTICLE_MAX_TOKENS = 12000
 
 
 def config(name, default=''):
@@ -161,8 +169,8 @@ def page_text(url):
     }
 
 
-def llm(prompt, max_tokens=7000):
-    """Generate text with Gemini."""
+def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
+    """Generate long-form SEO text with Gemini."""
     key = config('GEMINI_API_KEY')
 
     if not key:
@@ -343,7 +351,12 @@ def article_html(md):
 
 
 def run_batch(limit=5, dry_run=False):
-    from article_history import load_history, next_topics, save_article, make_record
+    from article_history import (
+        load_history,
+        next_topics,
+        save_article,
+        make_record
+    )
 
     db = db_connect()
     items = load_verified_items()
@@ -395,7 +408,10 @@ def run_batch(limit=5, dry_run=False):
 ・医療的効果は断定しない
 ・冒頭に広告表記を掲載する
 ・PREP法を用いて読みやすい記事を作成する
-・約3000〜5000字を目安にする
+・記事本文は日本語で{ARTICLE_MIN_CHARS}〜{ARTICLE_MAX_CHARS}字を目安に作成する
+・文字数を増やすためだけの冗長な文章や同じ説明の繰り返しを避ける
+・検索意図に沿った具体例、比較、選び方、注意点、FAQを充実させる
+・確認できない商品情報を補って文字数を増やさない
 ・タイトルはMarkdownの#を使用する
 ・見出しは##と###を使用する
 ・長所、短所、向かない人、FAQを含める
@@ -477,13 +493,32 @@ Markdown形式で記事本文のみ出力してください。
                 article_html(md)
             )
 
-            # Persist immediately after WordPress succeeds, before creative generation.
-            # If this fails, report the draft ID and stop to avoid duplicate posts.
+            # Persist immediately after WordPress succeeds,
+            # before creative generation.
+            # If this fails, report the draft ID and stop
+            # to avoid duplicate posts.
             try:
-                save_article(make_record(item, key, angle, keyword, title, wp_id))
+                save_article(
+                    make_record(
+                        item,
+                        key,
+                        angle,
+                        keyword,
+                        title,
+                        wp_id
+                    )
+                )
             except Exception as history_exc:
-                report.append({'title': title, 'status': 'error', 'wp_id': wp_id,
-                               'reason': 'WordPress下書きは保存済みですが履歴保存に失敗: ' + str(history_exc)[:160]})
+                report.append({
+                    'title': title,
+                    'status': 'error',
+                    'wp_id': wp_id,
+                    'reason': (
+                        'WordPress下書きは保存済みですが'
+                        '履歴保存に失敗: '
+                        + str(history_exc)[:160]
+                    )
+                })
                 break
 
             # Record article history
