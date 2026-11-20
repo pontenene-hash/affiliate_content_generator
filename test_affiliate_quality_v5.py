@@ -1,4 +1,5 @@
-"""Run: python test_affiliate_quality_v5.py [path/to/all_prompts.json]"""
+assert set(result) == set(original) | {'[V5_REVIEWED]'}, 'Unexpected top-level keys'
+assert result['[V5_REVIEWED]'] is True, 'V5 review marker missing'
 import copy
 import json
 import pathlib
