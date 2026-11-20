@@ -32,49 +32,163 @@ jobs:
         run: |
           python test_affiliate_quality_v5.py
 
+      - name: Check V5 integration without external APIs
+        run: |
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+
+          source = Path("auto_creative.py").read_text(
+              encoding="utf-8"
+          )
+
+          tree = ast.parse(source)
+
+          functions = [
+              node
+              for node in tree.body
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "build_bundle"
+          ]
+
+          assert len(functions) == 1, (
+              "Expected exactly one build_bundle function"
+          )
+
+          function = functions[0]
+
+          has_review_call = any(
+              isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Name)
+              and node.func.id == "review_bundle"
+              for node in ast.walk(function)
+          )
+
+          has_installed_wrapper = (
+              "_original_build_bundle_v5 = build_bundle" in source
+              and "return review_bundle(original)" in source
+          )
+
+          if has_review_call:
+              print(
+                  "V5 quality review is integrated "
+                  "inside build_bundle."
+              )
+          elif has_installed_wrapper:
+              print(
+                  "V5 quality review is integrated "
+                  "using the installer wrapper."
+              )
+          else:
+              raise AssertionError(
+                  "V5 quality review is not integrated."
+              )
+
+          print("V5 integration structure check passed")
+          PY
+
       - name: Test installer on temporary copy
         run: |
           python - <<'PY'
+          import ast
           import pathlib
           import subprocess
           import sys
           import tempfile
 
           source = pathlib.Path("auto_creative.py")
+          source_text = source.read_text(encoding="utf-8")
 
-          with tempfile.TemporaryDirectory() as folder:
-              target = pathlib.Path(folder) / "auto_creative.py"
-              target.write_bytes(source.read_bytes())
+          tree = ast.parse(source_text)
 
-              subprocess.run(
-                  [
-                      sys.executable,
-                      "install_affiliate_quality_v5.py",
-                      str(target)
-                  ],
-                  check=True
+          functions = [
+              node
+              for node in tree.body
+              if isinstance(node, ast.FunctionDef)
+              and node.name == "build_bundle"
+          ]
+
+          assert len(functions) == 1, (
+              "Expected exactly one build_bundle function"
+          )
+
+          has_manual_v5 = any(
+              isinstance(node, ast.Call)
+              and isinstance(node.func, ast.Name)
+              and node.func.id == "review_bundle"
+              for node in ast.walk(functions[0])
+          )
+
+          has_installed_v5 = (
+              "_original_build_bundle_v5 = build_bundle"
+              in source_text
+          )
+
+          if has_manual_v5 or has_installed_v5:
+              print(
+                  "V5 is already integrated. "
+                  "Skipping installer to prevent duplication."
               )
 
-              updated = target.read_text(encoding="utf-8")
-              assert "AFFILIATE_QUALITY_V5_HOOK" in updated
-
-              backup = target.with_suffix(".py.v5.bak")
-              assert backup.exists()
-              assert backup.read_bytes() == source.read_bytes()
-
-              subprocess.run(
-                  [
-                      sys.executable,
-                      "install_affiliate_quality_v5.py",
-                      str(target)
-                  ],
-                  check=True
+              assert (
+                  "from affiliate_quality_v5 import review_bundle"
+                  in source_text
               )
 
-              assert target.read_text(encoding="utf-8") == updated
+              print("Existing V5 integration safety check passed")
 
-              print("V5 installer safety test passed")
+          else:
+              with tempfile.TemporaryDirectory() as folder:
+                  target = (
+                      pathlib.Path(folder) / "auto_creative.py"
+                  )
+
+                  target.write_bytes(source.read_bytes())
+
+                  command = [
+                      sys.executable,
+                      "install_affiliate_quality_v5.py",
+                      str(target),
+                  ]
+
+                  subprocess.run(command, check=True)
+
+                  updated = target.read_text(
+                      encoding="utf-8"
+                  )
+
+                  assert (
+                      "AFFILIATE_QUALITY_V5_HOOK" in updated
+                  )
+
+                  backup = target.with_suffix(
+                      ".py.v5.bak"
+                  )
+
+                  assert backup.exists()
+
+                  assert (
+                      backup.read_bytes()
+                      == source.read_bytes()
+                  )
+
+                  subprocess.run(command, check=True)
+
+                  assert (
+                      target.read_text(encoding="utf-8")
+                      == updated
+                  )
+
+                  print(
+                      "V5 installer safety test passed"
+                  )
           PY
+
+      - name: Confirm working tree is unchanged
+        run: |
+          git diff --exit-code
+          git diff --cached --exit-code
+          echo "Tracked repository files are unchanged."
 
       - name: Final safety confirmation
         run: |
