@@ -1,0 +1,59 @@
+
+name: Affiliate V5 Safe Apply
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  apply-v5:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Check target branch
+        run: |
+          test "$GITHUB_REF_NAME" = "feature-affiliate-sns"
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile auto_creative.py
+          python -m py_compile affiliate_quality_v5.py
+          python -m py_compile install_affiliate_quality_v5.py
+
+      - name: Run V5 quality tests
+        run: |
+          python -m unittest discover -p 'test_affiliate_quality_v5.py' -v
+
+      - name: Install V5 hook
+        run: |
+          python install_affiliate_quality_v5.py auto_creative.py
+
+      - name: Verify installation
+        run: |
+          python -m py_compile auto_creative.py
+          python -m unittest discover -p 'test_affiliate_quality_v5.py' -v
+
+      - name: Commit only auto_creative.py
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add auto_creative.py
+          if git diff --cached --quiet; then
+            echo "No changes needed."
+          else
+            git commit -m "Install affiliate V5 quality hook"
+            git push origin HEAD:feature-affiliate-sns
+          fi
