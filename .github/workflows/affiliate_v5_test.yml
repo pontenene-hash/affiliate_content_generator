@@ -28,11 +28,18 @@ jobs:
           python -m py_compile test_affiliate_quality_v5.py
           python -m py_compile test_quality_improvements.py
           python -m py_compile auto_creative.py
+          python -m py_compile affiliate_article_guard.py
+          python -m py_compile test_affiliate_article_guard.py
+          python -m py_compile auto_pipeline.py
 
       - name: Run V5 quality tests
         run: |
           python test_affiliate_quality_v5.py
           python test_quality_improvements.py
+
+      - name: Run article safety tests
+        run: |
+          python test_affiliate_article_guard.py
 
       - name: Test installer on temporary copy
         run: |
@@ -51,8 +58,6 @@ jobs:
               target.write_bytes(original)
 
               if marker in original.decode("utf-8"):
-                  # V5 is already integrated in build_bundle.
-                  # The installer must refuse a different hook.
                   result = subprocess.run(
                       [
                           sys.executable,
@@ -64,8 +69,6 @@ jobs:
                   )
 
                   if result.returncode == 0:
-                      # Only an identical, already-installed
-                      # hook may be accepted.
                       assert target.read_bytes() == original
                   else:
                       assert (
@@ -74,11 +77,8 @@ jobs:
                       )
 
                   assert target.read_bytes() == original
-                  print(
-                      "Existing V5 integration preserved."
-                  )
+                  print("Existing V5 integration preserved.")
               else:
-                  # Test installation only on a temporary file.
                   subprocess.run(
                       [
                           sys.executable,
@@ -99,8 +99,6 @@ jobs:
                   assert backup.exists()
                   assert backup.read_bytes() == original
 
-                  # Running the installer again must not
-                  # change the already-installed file.
                   subprocess.run(
                       [
                           sys.executable,
@@ -115,9 +113,7 @@ jobs:
                       == updated
                   )
 
-                  print(
-                      "V5 installer safety test passed."
-                  )
+                  print("V5 installer safety test passed.")
           PY
 
       - name: Verify V5 integration without API calls
@@ -155,9 +151,28 @@ jobs:
           print("No WordPress requests were made.")
           PY
 
+      - name: Verify article guard integration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source = Path("auto_pipeline.py").read_text(
+              encoding="utf-8"
+          )
+
+          assert "affiliate_article_guard" in source, (
+              "Article safety guard is not integrated "
+              "into auto_pipeline.py"
+          )
+
+          print("Article guard reference found.")
+          print("No WordPress requests were made.")
+          PY
+
       - name: Final safety confirmation
         run: |
           echo "All V5 safety tests passed."
+          echo "Article safety tests passed."
           echo "Quality improvement tests passed."
           echo "No production files were modified."
           echo "WordPress was not accessed."
