@@ -504,46 +504,116 @@ def _generate_social_plan_legacy(client, model, article, call_llm, affiliate_url
 
 def generate_social_plan(client, model, article, call_llm, affiliate_url='',
                          promotion_context='アフィリエイト販売'):
-    prompt = f'''あなたは日本語の広告・SNS制作の専門家です。次の完成記事だけを情報源に、投稿文と映像台本をJSONで返してください。
-記事中に記載された数値も裏付けが不明な場合はSNSで強調しないでください。価格・送料・ステージ別の検査性能・早期発見・特許・定期プラン・医療機関との比較は、記事に書かれていても公式一次資料の確認ができない限りSNS本文・画像文字・動画テロップに含めない。文章は助詞で途切れず一文を完結させる。ハッシュタグは本文に重複記載せず、別フィールドだけに置く。
-医療・健康・美容商品の診断・治療・予防効果を断定せず、架空の価格、送料、検査精度、口コミ、人物、限定性、認証を追加しない。
-検査サービスを医療機関での診断の代わりと表現しない。正式名称を変更しない。
-アフィリエイトなら全投稿に【PR】、店頭案内のみなら【商品案内】を表示。
-Xは異なる角度で3案。Instagramカルーセルは9枚で、表紙・悩み・要点・注意点・まとめ・CTAを重複なく整理。
-リール、YouTube、TikTokは各42秒、冒頭表紙と最後のCTAを含む5〜8シーンを作成。
-各sceneにscene_type、caption、narration（音声ではなく45文字以内の画面テロップ）、visualを入れる。
-テロップはナレーションなしのタイピング表示、明るいインストゥルメンタルBGM。記事にない描写を創作しない。
-カルーセルとリールのハッシュタグは5個。画像用の短い見出し、補足、具体的なvisualも作る。
-URLがある場合、X・Threads・Facebook・LINE・YouTubeの投稿に1回含める。Instagram・TikTokはプロフィール導線。
-店舗販売のみでURLがなければ院内相談へ案内し、URLを創作しない。
-制作品質基準：{COMMON_QUALITY}
-販売・案内条件：{promotion_context}
-購入・確認URL：{affiliate_url or '未設定'}
-完成記事：\n---\n{article}\n---
-JSONの形式：
-{{
-"x_posts":[{{"text":"","hashtags":["#タグ"]}},{{"text":"","hashtags":["#タグ"]}},{{"text":"","hashtags":["#タグ"]}}],
-"x_image":{{"title":"","body":"","visual":""}},
-"threads":{{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""}},
-"facebook":{{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""}},
-"line":{{"text":"","image_title":"","image_body":"","visual":""}},
-"carousel":{{"caption":"","hashtags":["#タグ"],"slides":[{{"title":"","body":"","visual":""}}]}},
-"reel":{{"caption":"","hashtags":["#タグ"],"cover_title":"","cover_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}},
-"youtube":{{"title":"","description":"","hashtags":["#タグ"],"thumbnail_title":"","thumbnail_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}},
-"tiktok":{{"caption":"","hashtags":["#タグ"],"cover_title":"","cover_body":"","scenes":[{{"scene_type":"opening_cover/content/affiliate_cta","caption":"","narration":"","visual":""}}]}}
-}}
-JSON以外を出力しない。'''
-    last_error = None
-    for attempt in range(2):
-        try:
-            raw = call_llm(client, model, prompt + ('\n前回のJSONが不完全でした。短く有効なJSONを返してください。' if attempt else ''),
-                           16000, response_mime_type='application/json', temperature=0.35)
-            data = _normalize_social_plan(_load_json_response(raw), article, promotion_context, affiliate_url)
-            _validate_social_plan(data)
-            return data
-        except (ValueError, json.JSONDecodeError) as exc:
-            last_error = exc
-    raise ValueError(f'SNS投稿文と制作プロンプトを完成できませんでした：{last_error}')
+    """Generate smaller JSON blocks, then normalize and validate as before."""
+    import copy
+
+    article = str(article or '')
+    shared_rules = (
+        'あなたは日本語の広告・SNS制作の専門家です。完成記事のみを情報源にしてください。\n'
+        '記事にない事実・口コミ・効果・価格・送料・認証・商品画像を創作しない。\n'
+        '医療・健康・美容商品の診断・治療・予防効果を断定しない。\n'
+        '検査サービスを医療機関の診断・検査の代わりと表現しない。\n'
+        '価格、送料、ステージ別性能、早期発見、特許、医療機関との比較は、'
+        '一次資料を確認できない限りSNSで強調しない。\n'
+        '正式名称を変えず、自然な日本語の完結した文を使用する。\n'
+        '本文にハッシュタグを重複させず、hashtags配列へ記入する。\n'
+        'アフィリエイトは【PR】、店頭案内のみなら【商品案内】を明記。\n'
+        'X・Threads・Facebook・LINE・YouTubeには指定URLを1回、'
+        'Instagram・TikTokはプロフィールへ誘導。URLを創作しない。\n'
+        '動画は音声ナレーションなし、タイピング風字幕と明るい権利確認済みBGM。\n'
+        '各sceneのnarrationは音声ではなく45文字以内の画面テロップ。\n'
+        'JSONオブジェクトだけを返し、Markdownコードフェンスや説明文を付けない。\n'
+        f'制作品質基準：{COMMON_QUALITY}\n'
+        f'販売・案内条件：{promotion_context}\n'
+        f'購入・確認URL：{affiliate_url or "未設定"}\n'
+        f'完成記事：\n---\n{article}\n---\n'
+    )
+    specs = (
+        (
+            '投稿文',
+            ('x_posts', 'x_image', 'threads', 'facebook', 'line'),
+            'Xは異なる切り口で3案。各SNSの投稿文と画像用の短いコピーを作成。'
+            'LINEは本文を必ず作成。\n'
+            '出力JSON形式：\n'
+            '{"x_posts":[{"text":"","hashtags":["#タグ"]}],'
+            '"x_image":{"title":"","body":"","visual":""},'
+            '"threads":{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""},'
+            '"facebook":{"text":"","hashtags":["#タグ"],"image_title":"","image_body":"","visual":""},'
+            '"line":{"text":"","image_title":"","image_body":"","visual":""}}',
+            6000,
+        ),
+        (
+            'Instagramカルーセル',
+            ('carousel',),
+            'カルーセルは必ず9枚。表紙、読者の悩み、要点、注意点、まとめ、CTAを重複なく構成。'
+            '各スライドにはtitle、body、visualを入れる。ハッシュタグは5個。\n'
+            '出力JSON形式：\n'
+            '{"carousel":{"caption":"","hashtags":["#タグ"],'
+            '"slides":[{"title":"","body":"","visual":""}]}}',
+            5500,
+        ),
+        (
+            '動画',
+            ('reel', 'youtube', 'tiktok'),
+            'Instagramリール、YouTube、TikTokの3種類を作成。'
+            'それぞれ42秒、冒頭表紙と最後のCTAを含む5〜8シーン。'
+            '各シーンにscene_type、caption、narration、visualを入れる。'
+            'リールのハッシュタグは5個。\n'
+            '出力JSON形式：\n'
+            '{"reel":{"caption":"","hashtags":["#タグ"],'
+            '"cover_title":"","cover_body":"",'
+            '"scenes":[{"scene_type":"content","caption":"","narration":"","visual":""}]},'
+            '"youtube":{"title":"","description":"","hashtags":["#タグ"],'
+            '"thumbnail_title":"","thumbnail_body":"",'
+            '"scenes":[{"scene_type":"content","caption":"","narration":"","visual":""}]},'
+            '"tiktok":{"caption":"","hashtags":["#タグ"],'
+            '"cover_title":"","cover_body":"",'
+            '"scenes":[{"scene_type":"content","caption":"","narration":"","visual":""}]}}',
+            8500,
+        ),
+    )
+
+    merged = {}
+    for group_name, expected_keys, instructions, token_budget in specs:
+        last_error = None
+        for attempt in range(3):
+            extra = (
+                '\n前回の応答はJSONとして不完全でした。必須キーをすべて含め、'
+                '文を簡潔にし、有効なJSONオブジェクトのみを返してください。'
+                if attempt else ''
+            )
+            prompt = shared_rules + '\n【今回の生成対象】' + group_name + '\n' + instructions + extra
+            try:
+                raw = call_llm(
+                    client, model, prompt, token_budget,
+                    response_mime_type='application/json', temperature=0.25,
+                )
+                part = _load_json_response(raw)
+                missing = [key for key in expected_keys if key not in part]
+                if missing:
+                    raise ValueError('必須キー不足: ' + ', '.join(missing))
+                merged.update({key: copy.deepcopy(part[key]) for key in expected_keys})
+                break
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                last_error = exc
+                print(
+                    f'SNS {group_name} JSON再試行 {attempt + 1}/3: {str(exc)[:160]}',
+                    flush=True,
+                )
+        else:
+            raise ValueError(
+                f'SNS「{group_name}」のJSON生成に失敗しました: {last_error}'
+            )
+
+    try:
+        result = _normalize_social_plan(
+            merged, article, promotion_context, affiliate_url
+        )
+        _validate_social_plan(result)
+    except (ValueError, TypeError, KeyError, AttributeError) as exc:
+        raise ValueError(f'SNS構成の最終検証に失敗しました: {exc}') from exc
+    return result
+
 
 
 def social_text(plan):
