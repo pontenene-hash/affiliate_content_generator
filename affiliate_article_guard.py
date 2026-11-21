@@ -1,27 +1,57 @@
-"""Fail-closed, deterministic pre-WordPress review of generated affiliate articles.
+"""Deterministic, fail-closed pre-WordPress screening of affiliate articles.
 
-This is a screening tool, not independent verification of medical claims.
-No network calls and no modification of the supplied article.
+This is not independent fact-checking. It does not mutate the article or make
+network requests. High-risk medical/health claims require human review.
 """
 import re
 from urllib.parse import urlparse
 
-DISCLOSURE = re.compile(r'(?:アフィリエイト広告|広告を含みます|広告が含まれます|【PR】|\bPR\b)', re.I)
+DISCLOSURE = re.compile(r'アフィリエイト広告|広告(?:が)?含まれ|【PR】|\bPR\b', re.I)
 MEDICAL = re.compile(r'がん|癌|腫瘍|検査キット|尿検査|血液検査|疾患|診断|医療|治療|検診|スクリーニング|医薬品|サプリ|健康食品|血糖|血圧|更年期|脂肪燃焼|ダイエット|育毛|発毛|美容医療', re.I)
 RISK = re.compile(r'早期発見|ステージ\s*[1１一]|全身.{0,8}がん|がんリスク|検出感度|特異度|人間ドック.{0,12}(?:代わり|比較|安い)|(?:必ず|絶対|確実に).{0,12}(?:治|改善|効|発見)|(?:通院|検診|病院).{0,8}不要|副作用.{0,5}なし|100\s*[%％]|完治', re.I)
 QUOTE = re.compile(r'口コミ|評判|レビュー|体験談|利用者の声', re.I)
-SOURCE = re.compile(r'https?://\S+|出典\s*[:：]|引用元\s*[:：]|調査(?:元|対象|方法)', re.I)
+TESTIMONIAL = re.compile(r'(?:口コミ|評判|レビュー|体験談|利用者の声).{0,45}(?:良い|高い|多い|寄せられ|好評|満足|おすすめ|という声|との声)|(?:利用者|購入者|お客様).{0,30}(?:声|評価|感想)', re.I)
 PRICE = re.compile(r'(?:[¥￥]\s*\d[\d,]*|\d[\d,]*\s*円|送料無料|\d+\s*[%％]\s*(?:OFF|オフ|割引))', re.I)
+PLACEHOLDER = re.compile(r'【要確認|要確認・生成保留|\[V5_REVIEWED\]|\bTODO\b', re.I)
+MARKDOWN_LINK = re.compile(r'\[[^\]]*\]\((https?://[^\s)]+)(?:\s+[^)]*)?\)', re.I)
+BARE_URL = re.compile(r'https?://[^\s<>\]\)"\'、。]+', re.I)
+PRICE_NUMBER = re.compile(r'(?:[¥￥]\s*|(?<!\d))([0-9][0-9,]*)\s*円')
 HOLD = 'quality_review_required'
 
 
+def _normalized_url(url):
+    try:
+        p = urlparse(url.strip())
+        if p.scheme not in ('http', 'https') or not p.hostname or p.username or p.password:
+            return None
+        return p
+    except (ValueError, AttributeError):
+        return None
+
+
+def _article_without_links(text):
+    """Prevent affiliate links from being treated as testimonial evidence."""
+    return BARE_URL.sub('', text)
+
+
+def _money_values(text):
+    values = set()
+    for match in re.finditer(r'[¥￥]\s*([\d,]+)|([\d,]+)\s*円', text):
+        digits = (match.group(1) or match.group(2)).replace(',', '')
+        if digits.isdigit():
+            values.add(int(digits))
+    return values
+
+
 def review_article(markdown, product_name='', genre='', affiliate_url='', product_source=''):
-    """Return report. approved=False means never write a WordPress draft."""
+    """Return a stable report. approved=False must prevent WordPress writes."""
     if not isinstance(markdown, str):
         raise TypeError('markdown must be text')
+
     issues = []
-    def add(code, message, severity='block'):
-        issues.append({'code': code, 'severity': severity, 'message': message})
+    def add(code, message):
+        if not any(issue['code'] == code for issue in issues):
+            issues.append({'code': code, 'severity': 'block', 'message': message})
 
     text = markdown.strip()
     if len(text) < 500:
@@ -32,7 +62,9 @@ def review_article(markdown, product_name='', genre='', affiliate_url='', produc
         add('missing_title', 'MarkdownのH1見出しがありません')
     if not re.search(r'^##\s+\S+', text, re.M):
         add('missing_sections', 'MarkdownのH2見出しがありません')
-    if not affiliate_url or not urlparse(affiliate_url).scheme in ('http', 'https'):
+
+    parsed = _normalized_url(affiliate_url)
+    if parsed is None:
         add('missing_affiliate_url', '正規アフィリエイトURLがありません')
     else:
         count = text.count(affiliate_url)
@@ -40,18 +72,40 @@ def review_article(markdown, product_name='', genre='', affiliate_url='', produc
             add('missing_link', '正規アフィリエイトURLが記事内にありません')
         if count > 3:
             add('excess_links', 'アフィリエイトURLが3回を超えています')
-    if re.search(r'【要確認|要確認・生成保留|\[V5_REVIEWED\]|\bTODO\b', text, re.I):
+        # Any external hyperlink must be reviewed. A separate source URL is
+        # allowed only after human review; no automatic allowlisting by host.
+        for found in MARKDOWN_LINK.findall(text):
+            if found != affiliate_url:
+                add('unregistered_link', '未登録のリンクがあります。出典URLを含め人による確認が必要です')
+                break
+
+    if PLACEHOLDER.search(text):
         add('unresolved_placeholder', '未確認・生成保留の記載があります')
+
     if MEDICAL.search(' '.join([product_name, genre, text[:3000]])):
         add('medical_human_review', '医療・健康・美容関連は根拠と広告表現の人による確認が必要です')
     if RISK.search(text):
         add('high_risk_claim', '診断性能・早期発見・効能等の強い表現を確認してください')
-    if QUOTE.search(text) and not SOURCE.search(text):
+
+    # No generic URL can substantiate a testimonial. Positive or quoted
+    # testimonial claims require manual source-to-claim verification.
+    content = _article_without_links(text)
+    if TESTIMONIAL.search(content) or re.search(r'[「『][^」』]{2,100}[」』].{0,30}(?:口コミ|声|評価)', content):
+        add('testimonial_verification_required', '口コミ・体験談の原文と掲載許可・出典を確認してください')
+    elif QUOTE.search(content) and not re.search(r'口コミ.{0,24}(?:確認できな|掲載されていな|見つからな|紹介しない)', content):
         add('review_source_missing', '口コミ・評判の出典が確認できません')
-    if PRICE.search(text) and not product_source.strip():
-        add('price_source_missing', '価格・送料等の一次情報がありません')
-    # Presence of a vendor page is not proof that every claim in the article is true.
-    # Review pricing and testimonials manually when health claims or other flags exist.
+
+    if PRICE.search(text):
+        if not product_source.strip():
+            add('price_source_missing', '価格・送料等の一次情報がありません')
+        else:
+            claimed = _money_values(content)
+            source_values = _money_values(product_source)
+            if claimed and not claimed.issubset(source_values):
+                add('price_mismatch', '記事の金額が取得した商品情報と一致しません')
+            if re.search(r'送料無料|\d+\s*[%％]\s*(?:OFF|オフ|割引)', content, re.I):
+                add('commercial_terms_review', '送料・割引・購入条件は最新の公式情報を確認してください')
+
     return {
         'status': 'approved' if not issues else HOLD,
         'approved': not issues,
