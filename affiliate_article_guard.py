@@ -1,7 +1,8 @@
 """Deterministic, fail-closed pre-WordPress screening of affiliate articles.
 
-This is not independent fact-checking. It does not mutate the article or make
-network requests. High-risk medical/health claims require human review.
+This is not independent fact-checking. It does not mutate articles or make
+network requests. Medical/health claims and unsupported commercial assertions
+require human review. An approved result is NOT a factual guarantee.
 """
 import re
 from urllib.parse import urlparse
@@ -15,8 +16,20 @@ PRICE = re.compile(r'(?:[¥￥]\s*\d[\d,]*|\d[\d,]*\s*円|送料無料|\d+\s*[%�
 PLACEHOLDER = re.compile(r'【要確認|要確認・生成保留|\[V5_REVIEWED\]|\bTODO\b', re.I)
 MARKDOWN_LINK = re.compile(r'\[[^\]]*\]\((https?://[^\s)]+)(?:\s+[^)]*)?\)', re.I)
 BARE_URL = re.compile(r'https?://[^\s<>\]\)"\'、。]+', re.I)
-PRICE_NUMBER = re.compile(r'(?:[¥￥]\s*|(?<!\d))([0-9][0-9,]*)\s*円')
 HOLD = 'quality_review_required'
+
+# Only unambiguous statements that reviews have not been presented are exempt.
+NO_REVIEW_CLAIM = re.compile(
+    r'(?:口コミ|評判|レビュー|体験談).{0,32}'
+    r'(?:確認できな(?:い|かった)|掲載されていな(?:い|かった)|'
+    r'見つからな(?:い|かった)|紹介しない|引用しない|'
+    r'出典を確認できない|未確認)', re.I
+)
+PRICE_GUIDANCE = re.compile(
+    r'(?:価格|料金|送料|割引|購入条件).{0,35}'
+    r'(?:公式(?:サイト|ページ)|販売元).{0,18}'
+    r'(?:確認(?:してください|しましょう|が必要)|ご確認)', re.I
+)
 
 
 def _normalized_url(url):
@@ -25,12 +38,12 @@ def _normalized_url(url):
         if p.scheme not in ('http', 'https') or not p.hostname or p.username or p.password:
             return None
         return p
-    except (ValueError, AttributeError):
+    except (ValueError, AttributeError, TypeError):
         return None
 
 
 def _article_without_links(text):
-    """Prevent affiliate links from being treated as testimonial evidence."""
+    """Exclude URL strings from textual claim detection, not link labels."""
     return BARE_URL.sub('', text)
 
 
@@ -43,12 +56,31 @@ def _money_values(text):
     return values
 
 
+def _sentences(text):
+    """Keep price/negative review disclaimers local to their own sentence."""
+    return [part.strip() for part in re.split(r'[。！？\n]+', text) if part.strip()]
+
+
+def _has_review_claim(text):
+    for sentence in _sentences(text):
+        if not QUOTE.search(sentence):
+            # Keep the original positive-review detection for non-keyword claims.
+            if TESTIMONIAL.search(sentence):
+                return True
+            continue
+        if NO_REVIEW_CLAIM.search(sentence) and not TESTIMONIAL.search(sentence):
+            continue
+        return True
+    return False
+
+
 def review_article(markdown, product_name='', genre='', affiliate_url='', product_source=''):
     """Return a stable report. approved=False must prevent WordPress writes."""
     if not isinstance(markdown, str):
         raise TypeError('markdown must be text')
 
     issues = []
+
     def add(code, message):
         if not any(issue['code'] == code for issue in issues):
             issues.append({'code': code, 'severity': 'block', 'message': message})
@@ -72,8 +104,7 @@ def review_article(markdown, product_name='', genre='', affiliate_url='', produc
             add('missing_link', '正規アフィリエイトURLが記事内にありません')
         if count > 3:
             add('excess_links', 'アフィリエイトURLが3回を超えています')
-        # Any external hyperlink must be reviewed. A separate source URL is
-        # allowed only after human review; no automatic allowlisting by host.
+        # Keep the existing conservative rule: unregistered markdown links block.
         for found in MARKDOWN_LINK.findall(text):
             if found != affiliate_url:
                 add('unregistered_link', '未登録のリンクがあります。出典URLを含め人による確認が必要です')
@@ -87,24 +118,28 @@ def review_article(markdown, product_name='', genre='', affiliate_url='', produc
     if RISK.search(text):
         add('high_risk_claim', '診断性能・早期発見・効能等の強い表現を確認してください')
 
-    # No generic URL can substantiate a testimonial. Positive or quoted
-    # testimonial claims require manual source-to-claim verification.
     content = _article_without_links(text)
-    if TESTIMONIAL.search(content) or re.search(r'[「『][^」』]{2,100}[」』].{0,30}(?:口コミ|声|評価)', content):
-        add('testimonial_verification_required', '口コミ・体験談の原文と掲載許可・出典を確認してください')
-    elif QUOTE.search(content) and not re.search(r'口コミ.{0,24}(?:確認できな|掲載されていな|見つからな|紹介しない)', content):
-        add('review_source_missing', '口コミ・評判の出典が確認できません')
-
-    if PRICE.search(text):
-        if not product_source.strip():
-            add('price_source_missing', '価格・送料等の一次情報がありません')
+    if _has_review_claim(content):
+        if TESTIMONIAL.search(content) or re.search(r'[「『][^」』]{2,100}[」』].{0,30}(?:口コミ|声|評価)', content):
+            add('testimonial_verification_required', '口コミ・体験談の原文と掲載許可・出典を確認してください')
         else:
-            claimed = _money_values(content)
-            source_values = _money_values(product_source)
-            if claimed and not claimed.issubset(source_values):
-                add('price_mismatch', '記事の金額が取得した商品情報と一致しません')
-            if re.search(r'送料無料|\d+\s*[%％]\s*(?:OFF|オフ|割引)', content, re.I):
-                add('commercial_terms_review', '送料・割引・購入条件は最新の公式情報を確認してください')
+            add('review_source_missing', '口コミ・評判の出典が確認できません')
+
+    # Prices must be present in the source, but matching a number alone is not
+    # independent proof of the commercial terms or currency.
+    claimed = _money_values(content)
+    if claimed:
+        if not isinstance(product_source, str) or not product_source.strip():
+            add('price_source_missing', '価格の一次情報がありません')
+        elif not claimed.issubset(_money_values(product_source)):
+            add('price_mismatch', '記事の金額が取得した商品情報と一致しません')
+
+    for sentence in _sentences(content):
+        if re.search(r'送料無料|\d+\s*[%％]\s*(?:OFF|オフ|割引)', sentence, re.I):
+            add('commercial_terms_review', '送料・割引・購入条件は最新の公式情報を確認してください')
+            if not isinstance(product_source, str) or not product_source.strip():
+                add('price_source_missing', '価格・送料等の一次情報がありません')
+            break
 
     return {
         'status': 'approved' if not issues else HOLD,
