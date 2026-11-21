@@ -27,15 +27,16 @@ HOLD = re.compile(r'【要確認・生成保留】|生成保留')
 FALLBACK = (
     '商品の特徴と利用前の注意点を記事でご確認ください。'
 )
+
 SAFE_TITLE = '商品のポイント'
 SAFE_BODY = FALLBACK
+
 SAFE_VISUAL = (
     '明るく清潔感のある日本の生活場面。'
     '実物の商品や検査結果を想像で再現しない。'
 )
 
 HOLD_NOTICE = '【要確認・生成保留】'
-REVIEW_MARKER = '[V5_REVIEWED]'
 
 
 def _unsafe(value):
@@ -240,6 +241,15 @@ def _update_item(item, source, fields):
                 fallback
             )
 
+    # A previously held prompt must remain held.
+    # Do not bypass review if risky text has been added.
+    if (
+        HOLD.search(original_prompt)
+        and item.get('review_required') is True
+        and not RISK.search(original_prompt)
+    ):
+        return
+
     if unsafe_prompt:
         item['prompt'] = _replacement_prompt(item)
         item['review_required'] = True
@@ -300,6 +310,7 @@ def _sync_carousel_prompt(item, source, slide):
         if isinstance(source, dict)
         else ''
     )
+
     old_body = (
         str(source.get('body_text', ''))
         if isinstance(source, dict)
@@ -313,7 +324,8 @@ def _sync_carousel_prompt(item, source, slide):
     prompt = str(item.get('prompt', ''))
 
     if item.get('review_required'):
-        item['prompt'] = _replacement_prompt(item)
+        if RISK.search(prompt):
+            item['prompt'] = _replacement_prompt(item)
         return
 
     if old_title:
@@ -333,7 +345,13 @@ def _sync_carousel_prompt(item, source, slide):
 
 def _sync_video_prompt(item, before, after):
     if item.get('review_required'):
-        if '【シーン別字幕】' not in item['prompt']:
+        prompt = str(item.get('prompt', ''))
+
+        if RISK.search(prompt):
+            item['prompt'] = _replacement_prompt(item)
+            prompt = item['prompt']
+
+        if '【シーン別字幕】' not in prompt:
             lines = [
                 f"{index + 1}（{scene.get('duration', '')}）："
                 f"{scene.get('caption', '')}"
@@ -344,6 +362,7 @@ def _sync_video_prompt(item, before, after):
                 '\n【シーン別字幕】\n'
                 + '\n'.join(lines)
             )
+
         return
 
     prompt = str(item.get('prompt', ''))
@@ -364,15 +383,10 @@ def _sync_video_prompt(item, before, after):
 
 def review_bundle(bundle):
     """Review a deep copy without modifying source data."""
-    if (
-        isinstance(bundle, dict)
-        and bundle.get(REVIEW_MARKER) is True
-    ):
-        return copy.deepcopy(bundle)
-
     data = copy.deepcopy(bundle)
 
     plan = data.get('social_plan', {})
+
     affiliate_url = str(
         data.get('affiliate_url') or ''
     ).strip()
@@ -606,8 +620,6 @@ def review_bundle(bundle):
             gbp['review_required'] = True
 
     validate_bundle(data)
-
-    data[REVIEW_MARKER] = True
 
     return data
 
