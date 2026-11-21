@@ -86,15 +86,14 @@ def run():
     # 元データを変更していないことを確認
     assert original == before, 'Input mutated'
 
-    # V5専用の管理項目だけ追加を許可
-    expected_keys = set(original) | {'[V5_REVIEWED]'}
-
-    assert set(result) == expected_keys, (
+    # 最上位のデータ構造を変更しない
+    assert set(result) == set(original), (
         'Unexpected top-level keys'
     )
 
-    assert result['[V5_REVIEWED]'] is True, (
-        'V5 review marker missing'
+    # 不要なV5管理項目を追加しない
+    assert '[V5_REVIEWED]' not in result, (
+        'Unexpected V5 review marker'
     )
 
     # SNSと画像・動画プロンプトの種類を維持
@@ -108,12 +107,12 @@ def run():
         original['social_plan']['creative_prompts']
     ), 'Media inventory changed'
 
-    # Instagramカルーセル9枚を確認
+    # Instagramカルーセル9枚
     assert len(
         result['social_plan']['carousel']['slides']
     ) == 9, 'Instagram carousel must have 9 slides'
 
-    # 動画のシーン数と秒数が変更されていないことを確認
+    # 動画のシーン数と秒数を維持
     for platform in ('reel', 'youtube', 'tiktok'):
         old_scenes = original['social_plan'][platform]['scenes']
         new_scenes = result['social_plan'][platform]['scenes']
@@ -128,7 +127,19 @@ def run():
             scene['duration'] for scene in old_scenes
         ], platform + ' durations changed'
 
-    # 2回実行しても結果が変わらないことを確認
+        durations = [
+            int(''.join(
+                character for character in scene['duration']
+                if character.isdigit()
+            ))
+            for scene in new_scenes
+        ]
+
+        assert sum(durations) == 42, (
+            platform + ' must total 42 seconds'
+        )
+
+    # 2回実行しても結果が変わらない
     assert review_bundle(result) == result, (
         'Review is not idempotent'
     )
