@@ -1,0 +1,64 @@
+name: Apply SNS JSON Fix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: apply-sns-json-fix
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: github.ref_name == 'feature-affiliate-sns'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout feature branch
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check source and patch
+        run: |
+          python -m py_compile social_tools.py apply_social_json_fix.py
+          test -f social_tools.py
+          test -f apply_social_json_fix.py
+
+      - name: Apply patch and validate
+        run: |
+          set -euo pipefail
+          python apply_social_json_fix.py social_tools.py
+          python -m py_compile social_tools.py
+          python - <<'PY'
+          import ast
+          from pathlib import Path
+          source = Path('social_tools.py').read_text(encoding='utf-8')
+          tree = ast.parse(source)
+          names = [n.name for n in tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
+          assert names.count('generate_social_plan') == 1, 'generate_social_plan is duplicated or missing'
+          assert 'def save_bundle' not in source, 'Unexpected bundle code in social_tools.py'
+          print('SNS patch syntax and function check passed')
+          PY
+
+      - name: Commit only patched social_tools.py
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- social_tools.py
+          if git diff --cached --quiet; then
+            echo 'No changes to commit.'
+          else
+            git commit -m 'Split Gemini SNS JSON generation into smaller requests'
+            git push origin "HEAD:${BRANCH}"
+          fi
