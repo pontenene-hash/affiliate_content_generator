@@ -1,0 +1,38 @@
+
+name: Affiliate Publish Guard Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature-affiliate-sns
+    paths:
+      - affiliate_publish_guard.py
+      - test_affiliate_publish_guard.py
+      - .github/workflows/affiliate_publish_guard_test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check Python syntax
+        run: |
+          python -m py_compile affiliate_publish_guard.py
+          python -m py_compile test_affiliate_publish_guard.py
+
+      - name: Run Publish Guard tests
+        run: |
+          python test_affiliate_publish_guard.py
