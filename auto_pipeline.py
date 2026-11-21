@@ -487,6 +487,28 @@ Markdown形式で記事本文のみ出力してください。
                 item['title'] or page['title']
             )
 
+            # Fail closed before any WordPress write or history update.
+            # Existing SEO generation, affiliate URLs, and creative flow remain unchanged.
+            from affiliate_article_guard import review_article
+            quality = review_article(
+                md,
+                product_name=item['title'] or page['title'],
+                genre=item['genre'],
+                affiliate_url=link,
+                product_source=page['text'],
+            )
+            if not quality['approved']:
+                report.append({
+                    'title': title,
+                    'status': 'quality_review_required',
+                    'keyword': keyword,
+                    'angle': angle,
+                    'quality': quality,
+                    'reason': '記事本文の品質確認が必要なためWordPressへの保存を保留',
+                })
+                completed += 1
+                continue
+
             # Save WordPress draft
             wp_id = wp_draft(
                 title,
