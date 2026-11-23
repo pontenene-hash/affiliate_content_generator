@@ -279,8 +279,6 @@ jobs:
                   )
 
               if updated != original:
-                  # Match the backup filename created by
-                  # apply_social_json_fix.py.
                   backup = target.with_name(
                       target.name + '.before_json_fix.bak'
                   )
@@ -434,6 +432,7 @@ jobs:
           GH_HISTORY_TOKEN: ${{ github.token }}
           GITHUB_BRANCH: ${{ github.ref_name }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+          WP_SAVE_HELD_DRAFTS: 'true'
         run: |
           python - <<'PY'
           import json
@@ -532,5 +531,14 @@ jobs:
         with:
           name: affiliate-creative-prompts-${{ github.run_number }}
           path: creative_outputs/
+          retention-days: 30
+          if-no-files-found: ignore
+
+      - name: Upload articles requiring human review
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: affiliate-review-articles-${{ github.run_number }}
+          path: review_outputs/
           retention-days: 30
           if-no-files-found: ignore
