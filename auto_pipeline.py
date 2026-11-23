@@ -387,8 +387,31 @@ def record_saved_draft(db, save_article, make_record, item, key,
     db.commit()
 
 
+def move_summary_to_end(md):
+    """Move a top-level Markdown summary and its subsection(s) to the end.
+
+    Preserve the article text verbatim; do not fabricate a conclusion.
+    """
+    lines = md.splitlines(keepends=True)
+    starts = [i for i, line in enumerate(lines)
+              if re.match(r'^##\s+\S', line)]
+    summaries = [i for i in starts if re.match(
+        r'^##\s*(?:まとめ|総まとめ|結論|おわりに)(?:\s|$)', lines[i].strip())]
+    if len(summaries) != 1:
+        return md
+    start = summaries[0]
+    next_starts = [i for i in starts if i > start]
+    end = next_starts[0] if next_starts else len(lines)
+    if end == len(lines):
+        return md
+    summary = ''.join(lines[start:end]).strip()
+    other = ''.join(lines[:start] + lines[end:]).rstrip()
+    return other + '\n\n' + summary + '\n'
+
+
 def expand_article(md, page, keyword, item, affiliate_url):
     """Expand only with unique, source-grounded sections; never pad blindly."""
+    md = move_summary_to_end(md)
     if article_char_count(md) >= ARTICLE_MIN_CHARS:
         return md
 
@@ -416,8 +439,8 @@ def expand_article(md, page, keyword, item, affiliate_url):
         accepted = unique_expansion(md, extra)
         if not accepted:
             break
-        md = md.rstrip() + '\n\n' + accepted + '\n'
-    return md
+        md = move_summary_to_end(md.rstrip() + '\n\n' + accepted + '\n')
+    return move_summary_to_end(md)
 
 
 def creative_for_draft(md, title, product_name, wp_id, link):
@@ -570,7 +593,7 @@ Markdown形式で記事本文のみ出力してください。
 
             # Generate SEO article
             md = llm(prompt)
-            md = expand_article(md, page, keyword, item, link)
+            md = move_summary_to_end(expand_article(md, page, keyword, item, link))
 
             title = next(
                 (
