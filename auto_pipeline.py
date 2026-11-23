@@ -409,6 +409,23 @@ def move_summary_to_end(md):
     return other + '\n\n' + summary + '\n'
 
 
+def extract_editorial_notes(md):
+    """Keep editorial-only checklists out of reader-facing WordPress content."""
+    lines = md.splitlines(keepends=True)
+    headings = [i for i, line in enumerate(lines)
+                if re.match(r'^##\s+\S', line)]
+    notes = []
+    removed = set()
+    for pos, start in enumerate(headings):
+        title = lines[start].strip()
+        if re.match(r'^##\s*(?:【?公開前確認事項】?|編集者向け確認事項|公開前チェックリスト)(?:\s|$)', title):
+            end = headings[pos + 1] if pos + 1 < len(headings) else len(lines)
+            notes.append(''.join(lines[start:end]).strip())
+            removed.update(range(start, end))
+    clean = ''.join(line for i, line in enumerate(lines) if i not in removed).strip()
+    return clean + '\n', '\n\n'.join(notes)
+
+
 def expand_article(md, page, keyword, item, affiliate_url):
     """Expand only with unique, source-grounded sections; never pad blindly."""
     md = move_summary_to_end(md)
@@ -426,7 +443,7 @@ def expand_article(md, page, keyword, item, affiliate_url):
 次の原稿にまだ存在しない新しいMarkdownセクションのみ出力してください。
 既存の見出し、文章、結論、タイトルを再出力しないでください。
 既存見出し：{json.dumps(existing_headings, ensure_ascii=False)}
-記事の切り口に合う新規の比較軸、具体的な選び方、確認手順などを選んでください。
+記事の切り口に合う新規の比較軸、具体的な選び方、確認手順、FAQなどを選んでください。\n1セクション内で読者の判断に役立つ具体的な手順や条件分岐を丁寧に説明してください。\n根拠が足りない場合は無理に文字数を増やさず、要確認として残してください。
 見出しは##または###で始めてください。
 確認できない口コミ・利用者発言・価格・店舗・認証・納期・体験・効能を創作しないでください。
 出典のない口コミは引用・要約・創作しないでください。
@@ -520,7 +537,7 @@ def run_batch(limit=5, dry_run=False):
 
 【記事制作ルール】
 
-・架空の口コミ、体験、価格、効果を作らない\n・出典を明示できない利用者の声を引用・要約・創作しない\n・価格や納期は商品情報で明確に確認できない場合、数値を記載しない
+・架空の口コミ、体験、価格、効果を作らない\n・出典を明示できない利用者の声を引用・要約・創作しない\n・価格や納期は商品情報で明確に確認できない場合、数値を記載しない\n・料金、送料、割引、支払い方法、店舗、認証、納期、保証については根拠が曖昧なら具体的な数値や断定を避ける\n・確認事項を本文末尾に【公開前確認事項】として書かず、本文には読者向け情報だけを書く\n・記事の最後のH2見出しは「まとめ」にする。まとめの後に新たな解説節を作らない
 ・医療的効果は断定しない
 ・冒頭に広告表記を掲載する
 ・PREP法を用いて読みやすい記事を作成する
@@ -594,6 +611,7 @@ Markdown形式で記事本文のみ出力してください。
             # Generate SEO article
             md = llm(prompt)
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
+            md, editorial_notes = extract_editorial_notes(md)
 
             title = next(
                 (
@@ -649,9 +667,11 @@ Markdown形式で記事本文のみ出力してください。
                                ensure_ascii=False, indent=2), encoding='utf-8')
                 # Opt-in only: the default remains fail-closed with no WordPress write.
                 if config('WP_SAVE_HELD_DRAFTS', 'false').lower() == 'true':
-                    reason = '自動品質チェックで要確認：\n' + '\n'.join(
+                    reason = ('自動品質チェックで要確認：\n'
+                              + ('編集者メモ：\n' + editorial_notes + '\n' if editorial_notes else '')
+                              + '\n'.join(
                         str(issue.get('message', '')) for issue in quality.get('issues', [])
-                    )
+                    ))
                     wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest())
                     # Held drafts must also be recorded in persistent history.
                     # If recording fails, do not pretend the run succeeded.
@@ -679,7 +699,8 @@ Markdown形式で記事本文のみ出力してください。
             wp_id = wp_draft(
                 title,
                 article_html(md),
-                review_reason='機械チェック通過。ただし事実・広告表現・リンクは公開前に人が確認してください。',
+                review_reason=('機械チェック通過。ただし事実・広告表現・リンクは公開前に人が確認してください。'
+                               + ('\n編集者メモ：\n' + editorial_notes if editorial_notes else '')),
                 idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
             )
 
