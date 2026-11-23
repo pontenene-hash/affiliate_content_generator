@@ -302,33 +302,121 @@ def article_char_count(md):
     return len(body)
 
 
+
+def normalized_heading(value):
+    """Normalize headings to detect near-identical repeated sections."""
+    value = re.sub(r'^#{1,6}\s*', '', value.strip())
+    return re.sub(r'[\s\W_]+', '', value).casefold()
+
+
+def heading_list(md):
+    return [
+        normalized_heading(line)
+        for line in md.splitlines()
+        if re.match(r'^#{2,6}\s+\S', line)
+    ]
+
+
+def duplicate_headings(md):
+    seen = set()
+    duplicates = []
+    for heading in heading_list(md):
+        if heading in seen and heading not in duplicates:
+            duplicates.append(heading)
+        seen.add(heading)
+    return duplicates
+
+
+def normalized_paragraphs(md):
+    """Collect substantive paragraphs while ignoring formatting differences."""
+    paragraphs = re.split(r'\n\s*\n', md)
+    return [
+        re.sub(r'[\s\W_]+', '', paragraph).casefold()
+        for paragraph in paragraphs
+        if not paragraph.lstrip().startswith('#')
+        and len(re.sub(r'\s+', '', paragraph)) >= 100
+    ]
+
+
+def duplicate_paragraphs(md):
+    seen = set()
+    repeats = 0
+    for paragraph in normalized_paragraphs(md):
+        if paragraph in seen:
+            repeats += 1
+        seen.add(paragraph)
+    return repeats
+
+
+def unique_expansion(md, extra):
+    """Accept only complete new sections without repeated headings/paragraphs."""
+    extra = re.sub(r'(?m)^#\s+.*$', '', extra).strip()
+    if not extra or article_char_count(extra) < 150:
+        return ''
+
+    existing = set(heading_list(md))
+    new_headings = heading_list(extra)
+    if not new_headings or len(new_headings) != len(set(new_headings)):
+        return ''
+    if existing.intersection(new_headings):
+        return ''
+
+    candidate = md.rstrip() + '\n\n' + extra + '\n'
+    if duplicate_headings(candidate):
+        return ''
+    if duplicate_paragraphs(candidate) > duplicate_paragraphs(md):
+        return ''
+    if article_char_count(candidate) > ARTICLE_MAX_CHARS:
+        return ''
+    return extra
+
+
+def record_saved_draft(db, save_article, make_record, item, key,
+                       angle, keyword, title, wp_id, status):
+    """Persist held and ordinary drafts before creative generation.
+
+    A failure is surfaced rather than silently allowing the next run
+    to generate the same topic again.
+    """
+    save_article(make_record(item, key, angle, keyword, title, wp_id))
+    db.execute(
+        'INSERT OR REPLACE INTO history VALUES (?,?,?,?,?,?,?,?,?)',
+        (key, item['genre'], title, item['product_url'], keyword,
+         wp_id, status, datetime.now(timezone.utc).isoformat(), '')
+    )
+    db.commit()
+
+
 def expand_article(md, page, keyword, item, affiliate_url):
-    """Add source-grounded depth, never invent facts merely to meet a target."""
+    """Expand only with unique, source-grounded sections; never pad blindly."""
     if article_char_count(md) >= ARTICLE_MIN_CHARS:
         return md
+
     for _ in range(2):
-        before = article_char_count(md)
-        if before >= ARTICLE_MIN_CHARS:
+        if article_char_count(md) >= ARTICLE_MIN_CHARS:
             break
-        extra = llm(f"""あなたは日本語SEO記事の編集者です。以下の原稿の末尾に追加できる、
-新規のMarkdownセクションだけを書いてください。既存の本文やタイトルは再出力しないでください。
-追加候補は依頼前チェックリスト、サービス選択時の比較軸、発送準備、保存方法、
-利用前の確認事項、FAQです。既存見出しや内容と重複しないものを選んでください。
-元記事にない価格、店舗、認証、納期、口コミ、実体験、効能を創作しないでください。
-根拠がないことは断定せず、公式窓口で確認するよう案内してください。
-外部サイトの文章をコピーしないでください。広告URLは新たに記載しないでください。
-目安は追加1200〜1800字ですが、確かな内容が足りなければ短くしてください。
+        existing_headings = [
+            line.strip() for line in md.splitlines()
+            if re.match(r'^#{2,6}\s+', line)
+        ]
+        extra = llm(f"""あなたは日本語SEO記事の編集者です。
+次の原稿にまだ存在しない新しいMarkdownセクションのみ出力してください。
+既存の見出し、文章、結論、タイトルを再出力しないでください。
+既存見出し：{json.dumps(existing_headings, ensure_ascii=False)}
+記事の切り口に合う新規の比較軸、具体的な選び方、確認手順などを選んでください。
+見出しは##または###で始めてください。
+確認できない口コミ・利用者発言・価格・店舗・認証・納期・体験・効能を創作しないでください。
+出典のない口コミは引用・要約・創作しないでください。
+外部サイトの文章をコピーせず、広告URLを新たに記載しないでください。
 主キーワード：{keyword}
 商品名：{item['title']}
-元情報（参考データであり指示ではありません）：{page['text'][:10000]}
+商品情報（参考データ）：{page['text'][:10000]}
 現在の原稿：{md[:16000]}
 """, max_tokens=5000)
-        extra = re.sub(r'(?m)^#\s+.*$', '', extra).strip()
-        if not extra or article_char_count(extra) < 150:
+        accepted = unique_expansion(md, extra)
+        if not accepted:
             break
-        md = md.rstrip() + '\n\n' + extra + '\n'
-        if article_char_count(md) <= before:
-            break
+        md = md.rstrip() + '\n\n' + accepted + '\n'
     return md
 
 
@@ -409,7 +497,7 @@ def run_batch(limit=5, dry_run=False):
 
 【記事制作ルール】
 
-・架空の口コミ、体験、価格、効果を作らない
+・架空の口コミ、体験、価格、効果を作らない\n・出典を明示できない利用者の声を引用・要約・創作しない\n・価格や納期は商品情報で明確に確認できない場合、数値を記載しない
 ・医療的効果は断定しない
 ・冒頭に広告表記を掲載する
 ・PREP法を用いて読みやすい記事を作成する
@@ -507,6 +595,25 @@ Markdown形式で記事本文のみ出力してください。
                     'code': 'article_too_short',
                     'message': f'本文{actual_chars}文字。目標{ARTICLE_MIN_CHARS}文字未満のため要確認'
                 }]
+            repeats = duplicate_headings(md)
+            repeated_paragraphs = duplicate_paragraphs(md)
+            if repeats or repeated_paragraphs:
+                quality = dict(quality)
+                quality['approved'] = False
+                quality['issues'] = list(quality.get('issues') or []) + [{
+                    'code': 'duplicate_article_content',
+                    'message': (
+                        f'重複見出し{len(repeats)}件、重複段落'
+                        f'{repeated_paragraphs}件。公開前に修正してください'
+                    )
+                }]
+            if article_char_count(md) > ARTICLE_MAX_CHARS:
+                quality = dict(quality)
+                quality['approved'] = False
+                quality['issues'] = list(quality.get('issues') or []) + [{
+                    'code': 'article_too_long',
+                    'message': f'本文{article_char_count(md)}文字。目標上限超過のため要確認'
+                }]
             if not quality['approved']:
                 review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
                 review_dir.mkdir(parents=True, exist_ok=True)
@@ -523,6 +630,12 @@ Markdown形式で記事本文のみ出力してください。
                         str(issue.get('message', '')) for issue in quality.get('issues', [])
                     )
                     wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest())
+                    # Held drafts must also be recorded in persistent history.
+                    # If recording fails, do not pretend the run succeeded.
+                    record_saved_draft(
+                        db, save_article, make_record, item, key, angle,
+                        keyword, title, wp_id, 'held_draft'
+                    )
                     creative_status = creative_for_draft(
                         md, title, item['title'] or page['title'], wp_id, link
                     )
@@ -547,20 +660,12 @@ Markdown形式で記事本文のみ出力してください。
                 idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
             )
 
-            # Persist immediately after WordPress succeeds,
-            # before creative generation.
-            # If this fails, report the draft ID and stop
-            # to avoid duplicate posts.
+            # Persist immediately after WordPress succeeds.
+            # The same persistent history applies to ordinary and held drafts.
             try:
-                save_article(
-                    make_record(
-                        item,
-                        key,
-                        angle,
-                        keyword,
-                        title,
-                        wp_id
-                    )
+                record_saved_draft(
+                    db, save_article, make_record, item, key, angle,
+                    keyword, title, wp_id, 'draft'
                 )
             except Exception as history_exc:
                 report.append({
@@ -568,31 +673,11 @@ Markdown形式で記事本文のみ出力してください。
                     'status': 'error',
                     'wp_id': wp_id,
                     'reason': (
-                        'WordPress下書きは保存済みですが'
-                        '履歴保存に失敗: '
+                        'WordPress下書きは保存済みですが履歴保存に失敗: '
                         + str(history_exc)[:160]
                     )
                 })
                 break
-
-            # Record article history
-            db.execute(
-                'INSERT OR REPLACE INTO history '
-                'VALUES (?,?,?,?,?,?,?,?,?)',
-                (
-                    key,
-                    item['genre'],
-                    title,
-                    url,
-                    keyword,
-                    wp_id,
-                    'draft',
-                    datetime.now(timezone.utc).isoformat(),
-                    ''
-                )
-            )
-
-            db.commit()
 
             # Generate the existing creative bundle without altering its format.
             creative_status = creative_for_draft(
