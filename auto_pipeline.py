@@ -305,39 +305,45 @@ def load_verified_items():
     )
 
 
-def wp_draft(title, html):
-    """Save article as a WordPress draft."""
+def wp_review_gate_check():
+    """Require v0.3+ WordPress plugin and an unprivileged writer account."""
     base = config('WP_SITE_URL').rstrip('/')
     username = config('WP_USERNAME')
     password = config('WP_APP_PASSWORD')
-
     if not all([base, username, password]):
         raise RuntimeError('WordPress接続設定が不足しています')
+    endpoint = public_url(base + '/wp-json/ponte/v1/review-gate')
+    response = requests.get(endpoint, auth=(username, password), timeout=TIMEOUT)
+    response.raise_for_status()
+    data = response.json()
+    if not (data.get('active') is True and data.get('idempotent_drafts') is True
+            and data.get('human_only_approval') is True):
+        raise RuntimeError('PONTE確認プラグインv0.3以上を確認できません')
+    return True
 
-    endpoint = public_url(
-        base + '/wp-json/wp/v2/posts'
-    )
 
-    resp = requests.post(
+def wp_draft(title, html, review_reason='自動生成記事：人による公開前確認が必要です', idempotency_key=''):
+    """Create or recover a uniquely keyed, held WordPress draft."""
+    if not re.fullmatch(r'[a-f0-9]{64}', str(idempotency_key)):
+        raise ValueError('下書き保存には64文字の一意キーが必要です')
+    wp_review_gate_check()
+    base = config('WP_SITE_URL').rstrip('/')
+    endpoint = public_url(base + '/wp-json/ponte/v1/held-drafts')
+    response = requests.post(
         endpoint,
-        auth=(username, password),
-        json={
-            'title': title,
-            'content': html,
-            'status': 'draft'
-        },
-        timeout=40
+        auth=(config('WP_USERNAME'), config('WP_APP_PASSWORD')),
+        json={'title': title, 'content': html,
+              'review_reason': review_reason[:3000],
+              'idempotency_key': idempotency_key},
+        timeout=40,
     )
-
-    resp.raise_for_status()
-
-    data = resp.json()
-
+    response.raise_for_status()
+    data = response.json()
+    if data.get('review') not in ('needs_review', 'approved') or not data.get('id'):
+        raise RuntimeError('WordPressの確認状態を検証できません。管理画面で確認してください')
+    # A reused post may have been approved by a human, but never published by this process.
     if data.get('status') != 'draft':
-        raise RuntimeError(
-            'WordPressの保存結果が下書きではありません'
-        )
-
+        raise RuntimeError('既存投稿が下書きではありません。投稿ID: ' + str(data.get('id')))
     return int(data['id'])
 
 
@@ -487,32 +493,43 @@ Markdown形式で記事本文のみ出力してください。
                 item['title'] or page['title']
             )
 
-            # Fail closed before any WordPress write or history update.
-            # Existing SEO generation, affiliate URLs, and creative flow remain unchanged.
             from affiliate_article_guard import review_article
-            quality = review_article(
-                md,
-                product_name=item['title'] or page['title'],
-                genre=item['genre'],
-                affiliate_url=link,
-                product_source=page['text'],
-            )
+            quality = review_article(md, product_name=item['title'] or page['title'],
+                                     genre=item['genre'], affiliate_url=link,
+                                     product_source=page['text'])
             if not quality['approved']:
-                report.append({
-                    'title': title,
-                    'status': 'quality_review_required',
-                    'keyword': keyword,
-                    'angle': angle,
-                    'quality': quality,
-                    'reason': '記事本文の品質確認が必要なためWordPressへの保存を保留',
-                })
+                review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
+                review_dir.mkdir(parents=True, exist_ok=True)
+                review_key = hashlib.sha256((str(key) + title).encode('utf-8')).hexdigest()[:20]
+                (review_dir / f'{review_key}.md').write_text(md, encoding='utf-8')
+                (review_dir / f'{review_key}.json').write_text(
+                    json.dumps({'title': title, 'keyword': keyword, 'angle': angle,
+                                'quality': quality, 'product_name': item['title'],
+                                'created_at': datetime.now(timezone.utc).isoformat()},
+                               ensure_ascii=False, indent=2), encoding='utf-8')
+                # Opt-in only: the default remains fail-closed with no WordPress write.
+                if config('WP_SAVE_HELD_DRAFTS', 'false').lower() == 'true':
+                    reason = '自動品質チェックで要確認：\n' + '\n'.join(
+                        str(issue.get('message', '')) for issue in quality.get('issues', [])
+                    )
+                    wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest())
+                    report.append({'title': title, 'status': 'held_wp_draft',
+                                   'wp_id': wp_id, 'keyword': keyword,
+                                   'angle': angle, 'quality': quality,
+                                   'reason': '公開制限付き下書きとして保存。人による承認が必要'})
+                else:
+                    report.append({'title': title, 'status': 'quality_review_required',
+                                   'keyword': keyword, 'angle': angle, 'quality': quality,
+                                   'reason': '記事品質確認が必要なためWordPress保存を保留'})
                 completed += 1
                 continue
 
             # Save WordPress draft
             wp_id = wp_draft(
                 title,
-                article_html(md)
+                article_html(md),
+                review_reason='機械チェック通過。ただし事実・広告表現・リンクは公開前に人が確認してください。',
+                idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
             )
 
             # Persist immediately after WordPress succeeds,
