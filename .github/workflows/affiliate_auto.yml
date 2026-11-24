@@ -338,7 +338,7 @@ jobs:
         if: github.event_name == 'schedule' || (!inputs.safe_patch_check && !inputs.social_json_fix_check)
         run: |
           python -m py_compile integrated_quality.py
-          python -m unittest test_integrated_quality test_stage4_metadata
+          python -m unittest discover -v
           python -m py_compile auto_pipeline.py
           python -m py_compile auto_creative.py
           python -m py_compile social_tools.py
