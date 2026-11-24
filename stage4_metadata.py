@@ -21,6 +21,19 @@ def source_issues(md, source):
     return issues[:30]
 
 
-def seo_metadata(product, keyword, genre):
+def seo_metadata(product, keyword, genre, title=""):
+    product = str(product).strip()
+    tags = list(dict.fromkeys([product] + str(keyword).split()))[:8]
+    suffix = 'の特徴と選び方'
+    if 'FAQ' in keyword or 'よくある質問' in keyword:
+        suffix = 'のよくある質問と注意点'
+    elif '料金' in keyword:
+        suffix = 'の料金と利用前の確認事項'
+    elif '比較' in keyword:
+        suffix = 'の比較ポイントと選び方'
+    seo_title = (product + suffix)[:32]
+    description = (f'{product}を検討している方へ。特徴や選び方、利用前に確認したいポイントを整理します。'
+                   '料金や利用条件、口コミの出典を確認する際の注意点も踏まえ、ご自身に合うサービスか判断するための参考にしてください。')[:120]
     return {'category':str(genre)[:80], 'keyword':str(keyword)[:120],
-            'description':f'{product}を検討している方へ。サービスや商品の特徴、選び方、利用前に確認したいポイントを解説します。'[:160]}
+            'seo_title':seo_title, 'meta_keywords':','.join(tags), 'tags':tags,
+            'description':description}

@@ -180,14 +180,24 @@ def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
 
     from google.genai import types
 
-    response = client.models.generate_content(
-        model=gemini_model(),
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            max_output_tokens=max_tokens,
-            temperature=0.5
-        )
-    )
+    for attempt in range(4):
+        try:
+            response = client.models.generate_content(
+                model=gemini_model(),
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=max_tokens,
+                    temperature=0.5
+                )
+            )
+            break
+        except Exception as exc:
+            code = getattr(exc, 'code', None)
+            if str(code) != '503' or attempt == 3:
+                raise
+            delay = (15, 30, 60)[attempt]
+            print(f'Gemini 503: {delay}秒後に再試行します')
+            time.sleep(delay)
 
     result = (response.text or '').strip()
 
@@ -637,7 +647,8 @@ Markdown形式で記事本文のみ出力してください。
             # A short article is never automatically approved just because
             # the external quality checker accepts its other claims.
             from stage4_metadata import source_issues, seo_metadata
-            metadata = seo_metadata(item['title'], keyword, item['genre'])
+            metadata = seo_metadata(item['title'], keyword, item['genre'], title)
+            metadata['review_issues'] = []
             additional = extra_issues(md) + source_issues(md, page['text'])
             if additional:
                 quality = dict(quality, approved=False, status='quality_review_required', issues=list(quality.get('issues') or []) + additional)
@@ -668,6 +679,7 @@ Markdown形式で記事本文のみ出力してください。
                     'code': 'article_too_long',
                     'message': f'本文{article_char_count(md)}文字。目標上限超過のため要確認'
                 }]
+            metadata['review_issues'] = quality.get('issues', [])
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:
                 editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
