@@ -169,41 +169,56 @@ def page_text(url):
     }
 
 
-def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
-    """Generate long-form SEO text with Gemini."""
-    key = config('GEMINI_API_KEY')
+def gemini_candidates():
+    """Explicit fallback allowlist; never switch to Pro or paid-only models."""
+    return list(dict.fromkeys(filter(None, [gemini_model(), *(
+        m.strip() for m in config('GEMINI_FALLBACK_MODELS',
+            'gemini-3.1-flash-lite,gemini-2.5-flash-lite').split(',')
+    )])))
 
+
+def gemini_call_with_fallback(call):
+    candidates = gemini_candidates()
+    last = None
+    for index, model in enumerate(candidates):
+        for attempt in range(3):
+            try:
+                print(f'Gemini model: {model} (attempt {attempt + 1})')
+                result = call(model)
+                print(f'Gemini success: {model}')
+                return result
+            except Exception as exc:
+                code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
+                # Never bypass auth, billing, quota or invalid request errors.
+                if code == '404' and index > 0:
+                    last = exc
+                    break
+                if code != '503':
+                    raise
+                last = exc
+                if attempt < 2:
+                    delay = (15, 30)[attempt]
+                    print(f'Gemini 503: {delay}秒後に再試行します')
+                    time.sleep(delay)
+        if index + 1 < len(candidates):
+            print(f'Gemini fallback: {model} -> {candidates[index + 1]}')
+    raise last
+
+
+def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
+    """Generate long-form SEO text with bounded model fallback."""
+    key = config('GEMINI_API_KEY')
     if not key:
         raise RuntimeError('GEMINI_API_KEY が未設定です')
-
     client = genai.Client(api_key=key)
-
     from google.genai import types
-
-    for attempt in range(4):
-        try:
-            response = client.models.generate_content(
-                model=gemini_model(),
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    max_output_tokens=max_tokens,
-                    temperature=0.5
-                )
-            )
-            break
-        except Exception as exc:
-            code = getattr(exc, 'code', None)
-            if str(code) != '503' or attempt == 3:
-                raise
-            delay = (15, 30, 60)[attempt]
-            print(f'Gemini 503: {delay}秒後に再試行します')
-            time.sleep(delay)
-
+    response = gemini_call_with_fallback(lambda model: client.models.generate_content(
+        model=model, contents=prompt,
+        config=types.GenerateContentConfig(max_output_tokens=max_tokens, temperature=0.5)
+    ))
     result = (response.text or '').strip()
-
     if not result:
         raise RuntimeError('AIの出力が空でした')
-
     return result
 
 
@@ -475,10 +490,10 @@ def creative_for_draft(md, title, product_name, wp_id, link):
     """Save existing SNS/image/video prompt bundle, even for held drafts."""
     try:
         from auto_creative import build_bundle, save_bundle
-        bundle = build_bundle(
+        bundle = gemini_call_with_fallback(lambda model: build_bundle(
             md, title, product_name, wp_id, link,
-            config('GEMINI_API_KEY'), gemini_model()
-        )
+            config('GEMINI_API_KEY'), model
+        ))
         save_bundle(bundle)
         return 'saved'
     except Exception as exc:
