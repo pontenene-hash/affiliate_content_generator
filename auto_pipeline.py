@@ -170,39 +170,64 @@ def page_text(url):
 
 
 def gemini_candidates():
-    """Explicit fallback allowlist; never switch to Pro or paid-only models."""
-    return list(dict.fromkeys(filter(None, [gemini_model(), *(
-        m.strip() for m in config('GEMINI_FALLBACK_MODELS',
-            'gemini-3.1-flash-lite,gemini-2.5-flash-lite').split(',')
-    )])))
+    """Only explicitly allowed Lite models; listing does not prove free quota."""
+    allowed = {'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite'}
+    requested = [gemini_model(), *config('GEMINI_FALLBACK_MODELS',
+        'gemini-3.1-flash-lite').split(',')]
+    candidates = list(dict.fromkeys(m.strip().removeprefix('models/')
+        for m in requested if m.strip().removeprefix('models/') in allowed))
+    if not candidates:
+        raise RuntimeError('許可されたGemini Liteモデルがありません')
+    return candidates
 
 
 def gemini_call_with_fallback(call):
     candidates = gemini_candidates()
+    client = genai.Client(api_key=config('GEMINI_API_KEY'))
+    # Discovery is advisory: a temporary listing outage must not block generation.
+    try:
+        listed = {str(m.name).removeprefix('models/') for m in client.models.list()}
+    except Exception as exc:
+        code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
+        if code in ('400', '401', '403', '429'):
+            raise
+        print('Gemini model listing unavailable; using explicit allowlist')
+    else:
+        candidates = [m for m in candidates if m in listed]
+        if not candidates:
+            raise RuntimeError('利用可能な許可済みGemini Liteモデルがありません')
+    unavailable = set()
     last = None
-    for index, model in enumerate(candidates):
-        for attempt in range(3):
-            try:
-                print(f'Gemini model: {model} (attempt {attempt + 1})')
-                result = call(model)
-                print(f'Gemini success: {model}')
-                return result
-            except Exception as exc:
-                code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
-                # Never bypass auth, billing, quota or invalid request errors.
-                if code == '404':
+    # Two rounds, with a cooling-off period between rounds.
+    for round_no in range(2):
+        if round_no:
+            if not any(m not in unavailable for m in candidates):
+                break
+            print('Gemini 503: 120秒後に再試行します', flush=True)
+            time.sleep(120)
+        for model in candidates:
+            if model in unavailable:
+                continue
+            for attempt in range(2):
+                try:
+                    print(f'Gemini model: {model} (round {round_no + 1}, attempt {attempt + 1})', flush=True)
+                    result = call(model)
+                    print(f'Gemini success: {model}', flush=True)
+                    return result
+                except Exception as exc:
+                    code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
+                    if code == '404':
+                        unavailable.add(model)
+                        print(f'Gemini 404: {model} を今回の候補から除外', flush=True)
+                        last = exc
+                        break
+                    if code != '503':
+                        raise
                     last = exc
-                    break
-                if code != '503':
-                    raise
-                last = exc
-                if attempt < 2:
-                    delay = (15, 30)[attempt]
-                    print(f'Gemini 503: {delay}秒後に再試行します')
-                    time.sleep(delay)
-        if index + 1 < len(candidates):
-            print(f'Gemini fallback: {model} -> {candidates[index + 1]}')
-    raise last
+                    if attempt == 0:
+                        print('Gemini 503: 30秒後に再試行します', flush=True)
+                        time.sleep(30)
+    raise RuntimeError('Gemini generation unavailable after bounded retries; retry later') from last
 
 
 def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
