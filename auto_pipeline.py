@@ -265,14 +265,14 @@ def wp_review_gate_check():
     if not (data.get('active') is True and data.get('idempotent_drafts') is True
             and data.get('human_only_approval') is True):
         raise RuntimeError('PONTE確認プラグインv0.3以上を確認できません')
-    return True
+    return data
 
 
-def wp_draft(title, html, review_reason='自動生成記事：人による公開前確認が必要です', idempotency_key=''):
+def wp_draft(title, html, review_reason='自動生成記事：人による公開前確認が必要です', idempotency_key='', metadata=None):
     """Create or recover a uniquely keyed, held WordPress draft."""
     if not re.fullmatch(r'[a-f0-9]{64}', str(idempotency_key)):
         raise ValueError('下書き保存には64文字の一意キーが必要です')
-    wp_review_gate_check()
+    gate = wp_review_gate_check()
     base = config('WP_SITE_URL').rstrip('/')
     endpoint = public_url(base + '/wp-json/ponte/v1/held-drafts')
     response = requests.post(
@@ -280,7 +280,8 @@ def wp_draft(title, html, review_reason='自動生成記事：人による公開
         auth=(config('WP_USERNAME'), config('WP_APP_PASSWORD')),
         json={'title': title, 'content': html,
               'review_reason': review_reason[:3000],
-              'idempotency_key': idempotency_key},
+              'idempotency_key': idempotency_key,
+              **({'editorial_metadata': metadata} if metadata and gate.get('editorial_metadata') is True else {})},
         timeout=40,
     )
     response.raise_for_status()
@@ -608,11 +609,18 @@ Markdown形式で記事本文のみ出力してください。
                 completed += 1
                 continue
 
+            # Search for review leads separately; snippets are not verified testimonials.
+            from integrated_quality import review_leads, repair_article, extra_issues, safe_creative_source
+            leads = review_leads(brave_search, item['title']) if '口コミ' in angle else []
+            prompt += '\n実在口コミの原文と掲載条件は未検証です。口コミ・評判を調査済みと称さず、選び方や確認方法を中心にしてください。'
             # Generate SEO article
             md = llm(prompt)
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
 
+            md, repair_notes = repair_article(md, page['text'], link, llm, article_char_count, item['title'], item['genre'])
+            md, more_notes = extract_editorial_notes(move_summary_to_end(md))
+            editorial_notes = '\n'.join(filter(None, [editorial_notes, repair_notes, more_notes]))
             title = next(
                 (
                     line.lstrip('# ').strip()
@@ -628,6 +636,11 @@ Markdown形式で記事本文のみ出力してください。
                                      product_source=page['text'])
             # A short article is never automatically approved just because
             # the external quality checker accepts its other claims.
+            from stage4_metadata import source_issues, seo_metadata
+            metadata = seo_metadata(item['title'], keyword, item['genre'])
+            additional = extra_issues(md) + source_issues(md, page['text'])
+            if additional:
+                quality = dict(quality, approved=False, status='quality_review_required', issues=list(quality.get('issues') or []) + additional)
             actual_chars = article_char_count(md)
             if actual_chars < ARTICLE_MIN_CHARS:
                 quality = dict(quality)
@@ -655,6 +668,10 @@ Markdown形式で記事本文のみ出力してください。
                     'code': 'article_too_long',
                     'message': f'本文{article_char_count(md)}文字。目標上限超過のため要確認'
                 }]
+            # Always retain review leads for human verification; never treat snippets as quotes.
+            if leads:
+                editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
+            editorial_notes += '\n推奨カテゴリー：' + item['genre']
             if not quality['approved']:
                 review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
                 review_dir.mkdir(parents=True, exist_ok=True)
@@ -662,7 +679,7 @@ Markdown形式で記事本文のみ出力してください。
                 (review_dir / f'{review_key}.md').write_text(md, encoding='utf-8')
                 (review_dir / f'{review_key}.json').write_text(
                     json.dumps({'title': title, 'keyword': keyword, 'angle': angle,
-                                'quality': quality, 'product_name': item['title'],
+                                'quality': quality, 'product_name': item['title'], 'review_leads': leads, 'editorial_notes': editorial_notes, 'suggested_category': item['genre'], 'seo_metadata': metadata,
                                 'created_at': datetime.now(timezone.utc).isoformat()},
                                ensure_ascii=False, indent=2), encoding='utf-8')
                 # Opt-in only: the default remains fail-closed with no WordPress write.
@@ -672,7 +689,7 @@ Markdown形式で記事本文のみ出力してください。
                               + '\n'.join(
                         str(issue.get('message', '')) for issue in quality.get('issues', [])
                     ))
-                    wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest())
+                    wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest(), metadata=metadata)
                     # Held drafts must also be recorded in persistent history.
                     # If recording fails, do not pretend the run succeeded.
                     record_saved_draft(
@@ -680,12 +697,12 @@ Markdown形式で記事本文のみ出力してください。
                         keyword, title, wp_id, 'held_draft'
                     )
                     creative_status = creative_for_draft(
-                        md, title, item['title'] or page['title'], wp_id, link
+                        safe_creative_source(item['title'] or page['title']), item['title'] or page['title'] + 'の選び方', item['title'] or page['title'], wp_id, link
                     )
                     report.append({'title': title, 'status': 'held_wp_draft',
                                    'wp_id': wp_id, 'keyword': keyword,
                                    'angle': angle, 'quality': quality,
-                                   'characters': actual_chars,
+                                   'characters': actual_chars, 'suggested_category': item['genre'],
                                    'creative': creative_status,
                                    'reason': '公開制限付き下書きとして保存。人による承認が必要'})
                 else:
@@ -701,7 +718,7 @@ Markdown形式で記事本文のみ出力してください。
                 article_html(md),
                 review_reason=('機械チェック通過。ただし事実・広告表現・リンクは公開前に人が確認してください。'
                                + ('\n編集者メモ：\n' + editorial_notes if editorial_notes else '')),
-                idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest()
+                idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest(), metadata=metadata
             )
 
             # Persist immediately after WordPress succeeds.
@@ -725,7 +742,7 @@ Markdown形式で記事本文のみ出力してください。
 
             # Generate the existing creative bundle without altering its format.
             creative_status = creative_for_draft(
-                md, title, item['title'] or page['title'], wp_id, link
+                safe_creative_source(item['title'] or page['title']), item['title'] or page['title'] + 'の選び方', item['title'] or page['title'], wp_id, link
             )
 
             report.append({
@@ -734,7 +751,8 @@ Markdown形式で記事本文のみ出力してください。
                 'wp_id': wp_id,
                 'keyword': keyword,
                 'angle': angle,
-                'creative': creative_status
+                'creative': creative_status,
+                'suggested_category': item['genre']
             })
 
             completed += 1

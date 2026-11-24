@@ -88,17 +88,31 @@ def article_key(product, angle):
 def next_topics(items, history, limit):
     existing = {entry.get('key') for entry in history}
     tasks = []
-    # Round robin: diversify products before selecting the next angle.
-    for angle, suffix, focus in ANGLES:
-        for item in items:
+    # Prefer least-used products and genres, including within this batch.
+    from collections import Counter
+    product_counts = Counter(x.get('product_id') for x in history)
+    genre_counts = Counter()
+    for item in items:
+        pid = hashlib.sha256((item.get('affiliate_url') or item['product_url']).encode()).hexdigest()[:16]
+        genre_counts[item['genre']] += product_counts[pid]
+    while len(tasks) < limit:
+        choices = []
+        for index, item in enumerate(items):
             product = item.get('affiliate_url') or item['product_url']
-            key = article_key(product, angle)
-            if key not in existing:
-                base = item.get('keyword', '').strip() or item['title']
-                tasks.append((item, key, angle, f'{base} {suffix}', focus))
-                existing.add(key)
-                if len(tasks) >= limit:
-                    return tasks
+            pid = hashlib.sha256(product.encode()).hexdigest()[:16]
+            for angle, suffix, focus in ANGLES:
+                key = article_key(product, angle)
+                if key not in existing:
+                    choices.append((product_counts[pid], genre_counts[item['genre']], index, item, key, angle, suffix, focus, pid))
+                    break
+        if not choices:
+            break
+        _, _, _, item, key, angle, suffix, focus, pid = min(choices, key=lambda x: x[:3])
+        base = item.get('keyword', '').strip() or item['title']
+        tasks.append((item, key, angle, f'{base} {suffix}', focus))
+        existing.add(key)
+        product_counts[pid] += 1
+        genre_counts[item['genre']] += 1
     return tasks
 
 def make_record(item, key, angle, keyword, title, wp_id):
