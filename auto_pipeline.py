@@ -190,7 +190,7 @@ def gemini_call_with_fallback(call):
             except Exception as exc:
                 code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
                 # Never bypass auth, billing, quota or invalid request errors.
-                if code == '404' and index > 0:
+                if code == '404':
                     last = exc
                     break
                 if code != '503':
@@ -514,7 +514,8 @@ def run_batch(limit=5, dry_run=False):
         load_history,
         next_topics,
         save_article,
-        make_record
+        make_record,
+        topic_inventory
     )
 
     db = db_connect()
@@ -524,6 +525,11 @@ def run_batch(limit=5, dry_run=False):
     # Fail closed if the persistent history cannot be read.
     history = load_history()
     tasks = next_topics(items, history, limit)
+    inventory = topic_inventory(items, history)
+    for entry in inventory:
+        print(f"案件: {entry['product']} / 未使用テーマ: {len(entry['remaining_topics'])} / {entry['status']}", flush=True)
+    if not tasks:
+        print('新規生成対象なし：' + ('有効な登録案件がありません' if not items else '全テーマ使用済み。新規案件を登録してください'), flush=True)
     report = []
     completed = 0
 
@@ -798,7 +804,10 @@ Markdown形式で記事本文のみ出力してください。
     return {
         'processed': completed,
         'available_verified_items': len(items),
-        'results': report
+        'results': report,
+        'planned': len(tasks),
+        'topic_inventory': inventory,
+        'batch_status': ('no_enabled_products' if not items else 'topics_exhausted' if not tasks else 'processed')
     }
 
 

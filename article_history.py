@@ -6,6 +6,7 @@ import base64
 import hashlib
 import json
 import os
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 import requests
@@ -21,6 +22,31 @@ ANGLES = (
     ('よくある疑問', 'よくある質問 FAQ', 'よくある疑問と購入前の確認事項'),
     ('注意点・安全性', '注意点 安全性', '利用上の注意、限界、確認すべき情報'),
 )
+
+# Keep the original eight keys stable. Additional topics are finite and distinct.
+EXTRA_ANGLES = (
+    ('申し込み前の準備', '申し込み前 準備', '申し込み前に整理する情報、必要な準備と確認リスト'),
+    ('利用後の確認', '利用後 確認', '利用後の確認事項、問い合わせが必要な場合の判断材料'),
+    ('初めての利用', '初めて 初心者', '初心者が迷いやすい判断と準備。既存の手順記事を繰り返さない'),
+    ('問い合わせ・相談', '問い合わせ 相談', '問い合わせ前に整理する質問と確認すべき条件'),
+)
+
+def topic_keyword(item, suffix):
+    base = item.get('keyword', '').strip() or item['title']
+    # Generic review modifiers should not contaminate unrelated search intents.
+    base = re.sub(r'口コミ|評判|レビュー|体験談', ' ', base)
+    return ' '.join(dict.fromkeys((base + ' ' + suffix).split()))
+
+def topic_inventory(items, history):
+    existing = {entry.get('key') for entry in history}
+    result = []
+    for item in items:
+        product = item.get('affiliate_url') or item['product_url']
+        remaining = [angle for angle, _, _ in ANGLES + EXTRA_ANGLES if article_key(product, angle) not in existing]
+        result.append({'product': item['title'], 'remaining_topics': remaining,
+                       'status': 'available' if remaining else 'topics_exhausted'})
+    return result
+
 
 def _config():
     token = os.getenv('GH_HISTORY_TOKEN', '').strip()
@@ -100,7 +126,7 @@ def next_topics(items, history, limit):
         for index, item in enumerate(items):
             product = item.get('affiliate_url') or item['product_url']
             pid = hashlib.sha256(product.encode()).hexdigest()[:16]
-            for angle, suffix, focus in ANGLES:
+            for angle, suffix, focus in ANGLES + EXTRA_ANGLES:
                 key = article_key(product, angle)
                 if key not in existing:
                     choices.append((product_counts[pid], genre_counts[item['genre']], index, item, key, angle, suffix, focus, pid))
@@ -108,8 +134,7 @@ def next_topics(items, history, limit):
         if not choices:
             break
         _, _, _, item, key, angle, suffix, focus, pid = min(choices, key=lambda x: x[:3])
-        base = item.get('keyword', '').strip() or item['title']
-        tasks.append((item, key, angle, f'{base} {suffix}', focus))
+        tasks.append((item, key, angle, topic_keyword(item, suffix), focus))
         existing.add(key)
         product_counts[pid] += 1
         genre_counts[item['genre']] += 1
