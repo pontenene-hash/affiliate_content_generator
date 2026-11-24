@@ -530,7 +530,7 @@ def article_html(md):
 
     return markdown.markdown(
         md,
-        extensions=['tables', 'fenced_code']
+        extensions=['tables', 'fenced_code', 'sane_lists']
     )
 
 
@@ -652,7 +652,7 @@ ASP：{item.get('asp', 'A8.net')}
 
 【出力形式】
 
-Markdown形式で記事本文のみ出力してください。
+Markdown形式で記事本文のみ出力してください。見出しや箇条書きの前後に空行を入れ、第三者の立場で説明し、事業者の一人称や根拠のない人気・安心の断定を避けてください。
 '''
 
             if dry_run:
@@ -693,7 +693,7 @@ Markdown形式で記事本文のみ出力してください。
             # A short article is never automatically approved just because
             # the external quality checker accepts its other claims.
             from stage4_metadata import source_issues, seo_metadata
-            metadata = seo_metadata(item['title'], keyword, item['genre'], title)
+            metadata = seo_metadata(item['title'], keyword, item['genre'], title, md)
             metadata['review_issues'] = []
             additional = extra_issues(md) + source_issues(md, page['text'])
             if additional:
