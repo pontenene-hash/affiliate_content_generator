@@ -181,6 +181,10 @@ def gemini_candidates():
     return candidates
 
 
+class EmptyGeminiOutput(RuntimeError):
+    pass
+
+
 def gemini_call_with_fallback(call):
     candidates = gemini_candidates()
     client = genai.Client(api_key=config('GEMINI_API_KEY'))
@@ -221,12 +225,20 @@ def gemini_call_with_fallback(call):
                         print(f'Gemini 404: {model} を今回の候補から除外', flush=True)
                         last = exc
                         break
+                    if isinstance(exc, EmptyGeminiOutput):
+                        last = exc
+                        print('Gemini empty text: retrying', flush=True)
+                        if attempt == 0:
+                            time.sleep(5)
+                        continue
                     if code != '503':
                         raise
                     last = exc
                     if attempt == 0:
                         print('Gemini 503: 30秒後に再試行します', flush=True)
                         time.sleep(30)
+    if isinstance(last, EmptyGeminiOutput):
+        raise last
     raise RuntimeError('Gemini generation unavailable after bounded retries; retry later') from last
 
 
@@ -237,14 +249,22 @@ def llm(prompt, max_tokens=ARTICLE_MAX_TOKENS):
         raise RuntimeError('GEMINI_API_KEY が未設定です')
     client = genai.Client(api_key=key)
     from google.genai import types
-    response = gemini_call_with_fallback(lambda model: client.models.generate_content(
-        model=model, contents=prompt,
-        config=types.GenerateContentConfig(max_output_tokens=max_tokens, temperature=0.5)
-    ))
-    result = (response.text or '').strip()
-    if not result:
-        raise RuntimeError('AIの出力が空でした')
-    return result
+    def generate(model):
+        response = client.models.generate_content(
+            model=model, contents=prompt,
+            config=types.GenerateContentConfig(max_output_tokens=max_tokens, temperature=0.5))
+        candidates = getattr(response, 'candidates', None) or []
+        reasons = [str(getattr(c, 'finish_reason', '')) for c in candidates]
+        feedback = getattr(response, 'prompt_feedback', None)
+        block = str(getattr(feedback, 'block_reason', '') or '')
+        if any(x.split('.')[-1] in ('SAFETY', 'RECITATION', 'PROHIBITED_CONTENT', 'BLOCKLIST', 'SPII', 'IMAGE_SAFETY', 'MODEL_ARMOR') for x in reasons) or block.split('.')[-1] not in ('', '0', 'BLOCK_REASON_UNSPECIFIED'):
+            raise RuntimeError('Gemini response blocked; human review required')
+        result = (response.text or '').strip()
+        if not result:
+            print(f'Gemini empty response: finish_reason={reasons}', flush=True)
+            raise EmptyGeminiOutput('AIの出力が空でした（再試行対象）')
+        return result
+    return gemini_call_with_fallback(generate)
 
 
 def affiliate_links():
@@ -490,7 +510,8 @@ def expand_article(md, page, keyword, item, affiliate_url):
             line.strip() for line in md.splitlines()
             if re.match(r'^#{2,6}\s+', line)
         ]
-        extra = llm(f"""あなたは日本語SEO記事の編集者です。
+        try:
+            extra = llm(f"""あなたは日本語SEO記事の編集者です。
 次の原稿にまだ存在しない新しいMarkdownセクションのみ出力してください。
 既存の見出し、文章、結論、タイトルを再出力しないでください。
 既存見出し：{json.dumps(existing_headings, ensure_ascii=False)}
@@ -504,6 +525,9 @@ def expand_article(md, page, keyword, item, affiliate_url):
 商品情報（参考データ）：{page['text'][:10000]}
 現在の原稿：{md[:16000]}
 """, max_tokens=5000)
+        except EmptyGeminiOutput:
+            print("追加生成が空のため既存原稿を保持し品質検査へ進みます", flush=True)
+            break
         accepted = unique_expansion(md, extra)
         if not accepted:
             continue
