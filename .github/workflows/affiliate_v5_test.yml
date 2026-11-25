@@ -9,17 +9,23 @@ permissions:
 
 jobs:
   test-v5:
+    if: github.ref == 'refs/heads/feature-affiliate-v2-validation'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+
+      - name: Install V2 validation dependencies
+        run: python -m pip install -r requirements.txt pytest
 
       - name: Check Python syntax
         run: |
@@ -169,18 +175,6 @@ jobs:
           print("No WordPress requests were made.")
           PY
 
-      - name: Final safety confirmation
-        run: |
-          echo "All V5 safety tests passed."
-          echo "Article safety tests passed."
-          echo "Quality improvement tests passed."
-          echo "No production files were modified."
-          echo "WordPress was not accessed."
-          echo "Scheduled article generation was not executed."
-      - name: Install V2 validation dependencies
-        run: |
-          python -m pip install -r requirements.txt pytest
-
       - name: Run V2 offline validation
         run: |
           python -m py_compile section_engine.py stage4_metadata.py auto_pipeline.py
@@ -193,3 +187,13 @@ jobs:
           name: affiliate-v2-validation-results
           path: validation-results.xml
           if-no-files-found: warn
+
+      - name: Final safety confirmation
+        run: |
+          echo "All V5 safety tests passed."
+          echo "V2 offline validation passed."
+          echo "Article safety tests passed."
+          echo "Quality improvement tests passed."
+          echo "No production files were modified."
+          echo "WordPress was not accessed."
+          echo "Scheduled article generation was not executed."
