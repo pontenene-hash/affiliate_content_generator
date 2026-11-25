@@ -447,15 +447,15 @@ def move_summary_to_end(md):
     starts = [i for i, line in enumerate(lines)
               if re.match(r'^##\s+\S', line)]
     summaries = [i for i in starts if re.match(
-        r'^##\s*(?:まとめ|総まとめ|結論|おわりに)(?:\s|$)', lines[i].strip())]
+        r'^##\s*(?:まとめ|総まとめ|結論|おわりに)(?:[：:｜|〜～—－\s]|$)', lines[i].strip())]
     if len(summaries) != 1:
         return md
     start = summaries[0]
     next_starts = [i for i in starts if i > start]
     end = next_starts[0] if next_starts else len(lines)
     if end == len(lines):
-        return md
-    summary = ''.join(lines[start:end]).strip()
+        return ''.join(lines[:start]) + '## まとめ\n' + ''.join(lines[start+1:])
+    summary = '## まとめ\n' + ''.join(lines[start+1:end]).strip()
     other = ''.join(lines[:start] + lines[end:]).rstrip()
     return other + '\n\n' + summary + '\n'
 
@@ -539,7 +539,7 @@ def full_quality(md, page, item, link):
     from stage5_ads import ad_issues, mark_sponsored
     rendered_html = mark_sponsored(article_html(md), link)
     from affiliate_article_guard import review_article
-    quality = review_article(md, product_name=item['title'] or page['title'],
+    quality = review_article(md, product_name=__import__('editorial_polish').display_name(item['title']) or page['title'],
                              genre=item['genre'], affiliate_url=link,
                              product_source=page['text'])
     # A short article is never automatically approved just because
@@ -608,6 +608,9 @@ def run_batch(limit=5, dry_run=False):
         if completed >= limit:
             break
 
+        from editorial_polish import display_name, polish
+        original_name = item['title']
+        name = display_name(original_name)
         url = item['product_url']
 
         link = item['affiliate_url'] or links.get(url, '')
@@ -644,6 +647,10 @@ def run_batch(limit=5, dry_run=False):
 ・医療的効果は断定しない
 ・冒頭に広告表記を掲載する
 ・PREP法を用いて読みやすい記事を作成する
+・悩み、原因、解決策、商品提案、特徴と短所、対象者、購入前の注意、FAQ、まとめの順を基本とし、切り口に応じて調整する
+・未検証の口コミは記事タイトルにも使用せず、商品固有の選び方を中心にする
+・同じ送料や価格の注意を複数の節で繰り返さない
+・商品名は短い表示名を使用し、誤字脱字を校正する
 ・記事本文は日本語で{ARTICLE_MIN_CHARS}〜{ARTICLE_MAX_CHARS}字を目安に作成する
 ・文字数を増やすためだけの冗長な文章や同じ説明の繰り返しを避ける
 ・検索意図に沿った具体例、比較、選び方、注意点、FAQを充実させる
@@ -674,7 +681,7 @@ ASP：{item.get('asp', 'A8.net')}
 
 ジャンル：{item['genre']}
 
-商品名：{item['title'] or page['title']}
+商品名：{name or page['title']}
 
 主キーワード：{keyword}
 
@@ -712,11 +719,11 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             prompt += '\n実在口コミの原文と掲載条件は未検証です。口コミ・評判を調査済みと称さず、選び方や確認方法を中心にしてください。'
             # Generate SEO article
             from stage5_ads import insert_ads, ad_issues, mark_sponsored
-            md = llm(prompt)
+            md = polish(llm(prompt), original_name, name)
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
 
-            md = insert_ads(move_summary_to_end(md), link, item['title'])
+            md = insert_ads(move_summary_to_end(polish(md, original_name, name)), link, name)
             rendered_html = mark_sponsored(article_html(md), link)
             title = next(
                 (
@@ -730,16 +737,16 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             quality = full_quality(md, page, item, link)
             from stage5_repair import revise_checked_article
             md, quality, audit = revise_checked_article(
-                md, quality, page['text'], item['title'] or page['title'], keyword,
+                md, quality, page['text'], name or page['title'], keyword,
                 llm, lambda text: full_quality(text, page, item, link),
-                lambda text: insert_ads(move_summary_to_end(extract_editorial_notes(text)[0]), link, item['title']),
+                lambda text: insert_ads(move_summary_to_end(polish(extract_editorial_notes(text)[0], original_name, name)), link, name),
                 article_char_count)
             editorial_notes += '\nAI再検査：' + audit
             rendered_html = mark_sponsored(article_html(md), link)
             title = next((line[2:].strip() for line in md.splitlines() if line.startswith('# ')), title)
             actual_chars = article_char_count(md)
             from stage4_metadata import seo_metadata
-            metadata = seo_metadata(item['title'], keyword, item['genre'], title, md)
+            metadata = seo_metadata(name, keyword.replace(original_name, name) if original_name else keyword, item['genre'], title, md)
             metadata['review_issues'] = quality.get('issues', [])
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:
@@ -770,7 +777,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                         keyword, title, wp_id, 'held_draft'
                     )
                     creative_status = creative_for_draft(
-                        safe_creative_source(item['title'] or page['title']), item['title'] or page['title'] + 'の選び方', item['title'] or page['title'], wp_id, link
+                        safe_creative_source(name or page['title']), (name or page['title']) + 'の選び方', name or page['title'], wp_id, link
                     )
                     report.append({'title': title, 'status': 'held_wp_draft',
                                    'wp_id': wp_id, 'keyword': keyword,
@@ -815,7 +822,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
 
             # Generate the existing creative bundle without altering its format.
             creative_status = creative_for_draft(
-                safe_creative_source(item['title'] or page['title']), item['title'] or page['title'] + 'の選び方', item['title'] or page['title'], wp_id, link
+                safe_creative_source(name or page['title']), (name or page['title']) + 'の選び方', name or page['title'], wp_id, link
             )
 
             report.append({

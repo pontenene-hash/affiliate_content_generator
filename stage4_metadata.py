@@ -36,7 +36,10 @@ CATEGORIES = set(CATEGORY_MAP.values()) | {'スポーツ・フィットネス', 
 def seo_metadata(product, keyword, genre, title="", article=""):
     product = str(product).strip()
     keyword = str(keyword)
-    tags = list(dict.fromkeys([product] + keyword.split()))[:8]
+    from editorial_polish import display_name
+    product = display_name(product)
+    remainder = keyword.replace(product, '')
+    tags = list(dict.fromkeys([product] + [x for x in remainder.split() if x not in ('口コミ','評判','レビュー','体験談') and len(x) <= 30 and not re.search(r'[【】]', x)]))[:8]
     suffix = 'の特徴と選び方'
     for terms, candidate in [
         (('利用後',), 'の利用後の確認ポイント'),
@@ -51,8 +54,10 @@ def seo_metadata(product, keyword, genre, title="", article=""):
         if any(t in keyword for t in terms):
             suffix = candidate
             break
-    seo_title = product + suffix
-    if len(seo_title) > 32:
+    if title and product in title and not re.search(r'口コミ|評判|レビュー|体験談', title):
+        suffix = 'の特徴と選び方' if re.search(r'口コミ|評判', suffix) else suffix
+    seo_title = title if title and product in title and len(title) <= 40 and not re.search(r'口コミ|評判|レビュー|体験談', title) else product + suffix
+    if len(seo_title) > 40:
         seo_title = product if len(product) > 32 else (title if product in title and len(title) <= 32 else product + 'の確認事項')
     description = f'{product}{suffix}を解説します。'
     headings = [re.sub(r'[*`]', '', x).strip() for x in re.findall(r'^#{2,3}\s+(.+)$', article, re.M)]
