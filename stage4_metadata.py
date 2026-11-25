@@ -16,6 +16,9 @@ def source_issues(md, source):
         if token not in source:
             issues.append({'code':'source_numeric_unmatched','message':f'公式取得本文に一致する数値表現なし：{token}'})
     for line in md.splitlines():
+        # A standalone question about certification is not an acquisition claim.
+        if re.fullmatch(r'[-*\s]*(?:情報セキュリティに関する)?認証[（(][^）)]+[）)]\s*の取得有無[*\s]*', line):
+            continue
         if re.search(r'送料無料|返金|保証|認証|支払い方法|営業時間|納期|割引|最安|業界初', line):
             issues.append({'code':'source_context_review','message':'条件・適用範囲を公式情報と照合：'+line[:180]})
     return issues[:30]

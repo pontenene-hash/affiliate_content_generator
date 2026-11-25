@@ -483,7 +483,7 @@ def expand_article(md, page, keyword, item, affiliate_url):
     if article_char_count(md) >= ARTICLE_MIN_CHARS:
         return md
 
-    for _ in range(2):
+    for _ in range(3):
         if article_char_count(md) >= ARTICLE_MIN_CHARS:
             break
         existing_headings = [
@@ -506,7 +506,7 @@ def expand_article(md, page, keyword, item, affiliate_url):
 """, max_tokens=5000)
         accepted = unique_expansion(md, extra)
         if not accepted:
-            break
+            continue
         md = move_summary_to_end(md.rstrip() + '\n\n' + accepted + '\n')
     return move_summary_to_end(md)
 
@@ -618,12 +618,8 @@ def run_batch(limit=5, dry_run=False):
 
 【アフィリエイトリンク】
 
-登録済みの正規広告URLのみ使用してください。
-
-広告URLは最大3箇所に設置してください。
-
-架空の広告URLや公式サイトURLへの置き換えは
-行わないでください。
+広告リンクはプログラム側で挿入します。URL、広告用仮文字列、A8_ADを出力しないでください。
+公式取得本文から確認できる商品固有の特徴を優先し、一般論と区別してください。
 
 【商品情報】
 
@@ -647,8 +643,6 @@ ASP：{item.get('asp', 'A8.net')}
 検索結果の傾向：
 {summary[:4000]}
 
-正規広告URL：
-{link}
 
 【出力形式】
 
@@ -670,13 +664,20 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             leads = review_leads(brave_search, item['title']) if '口コミ' in angle else []
             prompt += '\n実在口コミの原文と掲載条件は未検証です。口コミ・評判を調査済みと称さず、選び方や確認方法を中心にしてください。'
             # Generate SEO article
+            from stage5_ads import insert_ads, ad_issues, mark_sponsored
             md = llm(prompt)
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
 
+            md = insert_ads(md, link)
             md, repair_notes = repair_article(md, page['text'], link, llm, article_char_count, item['title'], item['genre'])
             md, more_notes = extract_editorial_notes(move_summary_to_end(md))
-            editorial_notes = '\n'.join(filter(None, [editorial_notes, repair_notes, more_notes]))
+            md = insert_ads(md, link)
+            if article_char_count(md) < ARTICLE_MIN_CHARS:
+                md = insert_ads(expand_article(md, page, keyword, item, link), link)
+            md, final_notes = extract_editorial_notes(md)
+            editorial_notes = '\n'.join(filter(None, [editorial_notes, repair_notes, more_notes, final_notes]))
+            rendered_html = mark_sponsored(article_html(md), link)
             title = next(
                 (
                     line.lstrip('# ').strip()
@@ -695,7 +696,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             from stage4_metadata import source_issues, seo_metadata
             metadata = seo_metadata(item['title'], keyword, item['genre'], title, md)
             metadata['review_issues'] = []
-            additional = extra_issues(md) + source_issues(md, page['text'])
+            additional = extra_issues(md) + source_issues(md, page['text']) + ad_issues(md, rendered_html, link)
             if additional:
                 quality = dict(quality, approved=False, status='quality_review_required', issues=list(quality.get('issues') or []) + additional)
             actual_chars = article_char_count(md)
@@ -747,7 +748,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                               + '\n'.join(
                         str(issue.get('message', '')) for issue in quality.get('issues', [])
                     ))
-                    wp_id = wp_draft(title, article_html(md), review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest(), metadata=metadata)
+                    wp_id = wp_draft(title, rendered_html, review_reason=reason, idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest(), metadata=metadata)
                     # Held drafts must also be recorded in persistent history.
                     # If recording fails, do not pretend the run succeeded.
                     record_saved_draft(
@@ -773,7 +774,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             # Save WordPress draft
             wp_id = wp_draft(
                 title,
-                article_html(md),
+                rendered_html,
                 review_reason=('機械チェック通過。ただし事実・広告表現・リンクは公開前に人が確認してください。'
                                + ('\n編集者メモ：\n' + editorial_notes if editorial_notes else '')),
                 idempotency_key=hashlib.sha256(str(key).encode('utf-8')).hexdigest(), metadata=metadata
