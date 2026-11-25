@@ -1,4 +1,3 @@
-
 {
   "products": [
     {
@@ -11,6 +10,17 @@
       "affiliate_html": "<a href=\"https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" rel=\"nofollow\">【尿がん検査くん】</a>\n<img border=\"0\" width=\"1\" height=\"1\" src=\"https://www15.a8.net/0.gif?a8mat=4BGJFV+B89CJ6+5W26+5YRHE\" alt=\"\">",
       "banner_html": "<a href=\"https://px.a8.net/svt/ejp?a8mat=4BGJFV+B89CJ6+5W26+5YZ75\" rel=\"nofollow\">\n<img border=\"0\" width=\"300\" height=\"250\" alt=\"尿がん検査くん公式広告\" src=\"https://www21.a8.net/svt/bgt?aid=261112171679&wid=001&eno=01&mid=s00000027483001003000&mc=1\"></a>\n<img border=\"0\" width=\"1\" height=\"1\" src=\"https://www10.a8.net/0.gif?a8mat=4BGJFV+B89CJ6+5W26+5YZ75\" alt=\"\">",
       "keyword": "尿がん検査くん 口コミ 評判",
+      "enabled": true
+    },
+    {
+      "id": "72f746f69feb07e0",
+      "asp": "A8.net",
+      "name": "家庭用品からペット・アウトドア用品を販売【HARIO NETSHOP】",
+      "genre": "ペット商品",
+      "product_url": "https://shop.hariocorp.co.jp/",
+      "affiliate_url": "https://px.a8.net/svt/ejp?a8mat=4BGTLP+555TWY+4XPI+5YJRM",
+      "affiliate_html": "<a href=\"https://px.a8.net/svt/ejp?a8mat=4BGTLP+555TWY+4XPI+5YJRM\" rel=\"nofollow\">珈琲器具からキッチン用品まで豊富に取り揃えています【HARIO NETSHOP】</a>\n\n<img border=\"0\" width=\"1\" height=\"1\" src=\"https://www19.a8.net/0.gif?a8mat=4BGTLP+555TWY+4XPI+5YJRM\" alt=\"\">",
+      "keyword": "",
       "enabled": true
     }
   ]
