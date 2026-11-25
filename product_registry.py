@@ -33,7 +33,7 @@ def parse_ad_code(code, asp='A8.net'):
 def github_config():
     token = os.environ.get('GITHUB_TOKEN', '').strip()
     repo = os.environ.get('GITHUB_REPOSITORY', '').strip()
-    branch = os.environ.get('GITHUB_BRANCH', 'main').strip()
+    branch = 'main'  # Shared product registry; independent of workflow branch.
     if token and re.fullmatch(r'[\w.-]+/[\w.-]+', repo):
         return token, repo, branch
     return None
