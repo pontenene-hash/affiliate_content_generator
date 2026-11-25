@@ -9,7 +9,7 @@ import sqlite3
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -128,7 +128,7 @@ def public_url(url):
     return url
 
 
-def page_text(url):
+def page_text(url, collect_guides=True):
     """Extract product information from a public HTML page."""
     url = public_url(url)
 
@@ -137,8 +137,15 @@ def page_text(url):
         headers={
             'User-Agent': 'Mozilla/5.0 (compatible; ContentResearch/1.0)'
         },
-        timeout=TIMEOUT
+        timeout=TIMEOUT, allow_redirects=False
     )
+    for _ in range(4):
+        if not resp.is_redirect:
+            break
+        target = public_url(urljoin(resp.url, resp.headers["Location"]))
+        resp = requests.get(target, timeout=TIMEOUT, allow_redirects=False)
+    if resp.is_redirect:
+        raise ValueError("公式URLのリダイレクト回数超過")
     resp.raise_for_status()
 
     public_url(resp.url)
@@ -156,6 +163,13 @@ def page_text(url):
         if soup.title else ''
     )
 
+    guides = []
+    if collect_guides:
+        for a in soup.select("a[href]"):
+            label = a.get_text(" ", strip=True)
+            target = urljoin(resp.url, a["href"]).split("#")[0]
+            if re.search(r"ご利用ガイド|送料|配送|返品|特定商取引|支払い|お買い物ガイド|利用規約", label) and urlparse(target).netloc == urlparse(resp.url).netloc and target != resp.url and target not in guides:
+                guides.append(target)
     for node in soup([
         'script', 'style', 'nav', 'footer', 'iframe', 'form'
     ]):
@@ -163,11 +177,17 @@ def page_text(url):
 
     text = soup.get_text(' ', strip=True)
 
-    return {
-        'title': title,
-        'text': text[:14000],
-        'url': resp.url
-    }
+    evidence = []
+    for target in guides[:3]:
+        try:
+            guide = page_text(target, False)
+            if urlparse(guide['url']).netloc != urlparse(resp.url).netloc:
+                continue
+            evidence.append(guide)
+        except Exception:
+            print('公式ガイド取得不可：人による確認を維持', flush=True)
+    combined = text[:7000] + ''.join('\n公式ガイド：'+g['url']+'\n'+g['text'][:3000] for g in evidence)
+    return {'title': title, 'text': combined, 'url': resp.url, 'guides': [g['url'] for g in evidence]}
 
 
 def gemini_candidates():
@@ -501,10 +521,10 @@ def extract_editorial_notes(md):
 def expand_article(md, page, keyword, item, affiliate_url):
     """Expand only with unique, source-grounded sections; never pad blindly."""
     md = move_summary_to_end(md)
-    if article_char_count(md) >= ARTICLE_TARGET_CHARS:
+    if article_char_count(md) >= ARTICLE_MIN_CHARS:
         return md
 
-    for _ in range(3):
+    for _ in range(1):
         if article_char_count(md) >= ARTICLE_TARGET_CHARS:
             break
         existing_headings = [
@@ -517,14 +537,14 @@ def expand_article(md, page, keyword, item, affiliate_url):
 既存の見出し、文章、結論、タイトルを再出力しないでください。
 不足文字数は約{max(0, ARTICLE_TARGET_CHARS - article_char_count(md))}字です。新しい具体的な判断手順を2〜3節で補い、送料や価格の同じ説明を繰り返さないでください。
 既存見出し：{json.dumps(existing_headings, ensure_ascii=False)}
-記事の切り口に合う新規の比較軸、具体的な選び方、確認手順、FAQなどを選んでください。\n1セクション内で読者の判断に役立つ具体的な手順や条件分岐を丁寧に説明してください。\n根拠が足りない場合は無理に文字数を増やさず、要確認として残してください。
+記事の切り口に合う新規の比較軸、具体的な選び方、確認手順、FAQ以外を選んでください。既存FAQを増設しない。\n1セクション内で読者の判断に役立つ具体的な手順や条件分岐を丁寧に説明してください。\n根拠が足りない場合は無理に文字数を増やさず、要確認として残してください。
 見出しは##または###で始めてください。
 確認できない口コミ・利用者発言・価格・店舗・認証・納期・体験・効能を創作しないでください。
 出典のない口コミは引用・要約・創作しないでください。
 外部サイトの文章をコピーせず、広告URLを新たに記載しないでください。
 主キーワード：{keyword}
 商品名：{item['title']}
-商品情報（参考データ）：{page['text'][:10000]}
+商品情報（参考データ）：{page['text'][:16000]}
 現在の原稿：{md[:16000]}
 """, max_tokens=5000)
         except EmptyGeminiOutput:
@@ -637,6 +657,7 @@ def run_batch(limit=5, dry_run=False):
         from editorial_polish import display_name, polish
         original_name = item['title']
         name = display_name(original_name)
+        keyword = (name or original_name) + ' ' + angle.replace('・', ' ')
         url = item['product_url']
 
         link = item['affiliate_url'] or links.get(url, '')
@@ -675,6 +696,7 @@ def run_batch(limit=5, dry_run=False):
 ・PREP法を用いて読みやすい記事を作成する
 ・悩み、原因、解決策、商品提案、特徴と短所、対象者、購入前の注意、FAQ、まとめの順を基本とし、切り口に応じて調整する
 ・未検証の口コミは記事タイトルにも使用せず、商品固有の選び方を中心にする
+・FAQはH2一箇所のみ。送料・価格・返品・決済の具体条件は、公式ガイドの該当文と適用範囲が確認できない限り断定しない。数値は原則省略し、確認手順を一箇所にまとめる。
 ・同じ送料や価格の注意を複数の節で繰り返さない
 ・商品名は短い表示名を使用し、誤字脱字を校正する
 ・記事本文は日本語で{ARTICLE_TARGET_CHARS}〜{ARTICLE_MAX_CHARS}字を目安に作成する
@@ -721,7 +743,7 @@ ASP：{item.get('asp', 'A8.net')}
 公式取得先：{page["url"]}
 取得日：{datetime.now(timezone.utc).date().isoformat()}
 商品情報（事実はここからのみ）：
-{page['text'][:10000]}
+{page['text'][:16000]}
 
 検索結果の傾向：
 {summary[:4000]}
@@ -753,7 +775,8 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
 
-            md = insert_ads(move_summary_to_end(polish(md, original_name, name)), link, name)
+            from stage6_structure import merge_faq
+            md = insert_ads(move_summary_to_end(polish(merge_faq(md), original_name, name)), link, name)
             rendered_html = mark_sponsored(article_html(md), link)
             title = next(
                 (
@@ -769,7 +792,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             md, quality, audit = revise_checked_article(
                 md, quality, page['text'], name or page['title'], keyword,
                 llm, lambda text: full_quality(text, page, item, link),
-                lambda text: insert_ads(move_summary_to_end(polish(extract_editorial_notes(text)[0], original_name, name)), link, name),
+                lambda text: insert_ads(move_summary_to_end(polish(merge_faq(extract_editorial_notes(text)[0]), original_name, name)), link, name),
                 article_char_count)
             editorial_notes += '\nAI再検査：' + audit
             rendered_html = mark_sponsored(article_html(md), link)
@@ -781,7 +804,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:
                 editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
-            editorial_notes += '\n公式取得先：' + page['url'] + '\n取得日（UTC）：' + datetime.now(timezone.utc).date().isoformat() + '\n推奨カテゴリー：' + metadata['category']
+            editorial_notes += '\n公式ガイド取得先：' + '、'.join(page.get('guides', [])) + '\n公式取得先：' + page['url'] + '\n取得日（UTC）：' + datetime.now(timezone.utc).date().isoformat() + '\n推奨カテゴリー：' + metadata['category']
             if not quality['approved']:
                 review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
                 review_dir.mkdir(parents=True, exist_ok=True)

@@ -6,7 +6,8 @@ from collections import Counter
 
 def revise_checked_article(md, quality, source, product, keyword, llm, check, normalize, count):
     before = quality.get('issues', [])
-    actionable = [i for i in before if i.get('code') != 'medical_human_review']
+    actionable = [i for i in before if i.get('code') not in ('medical_human_review', 'commercial_terms_review')]
+    # Generic human-review notices alone do not justify a costly rewrite.
     if not actionable:
         return md, quality, '修正対象なし。人による確認は必須。'
     try:
