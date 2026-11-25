@@ -7,6 +7,18 @@ def norm(s):
     return re.sub(r'\s+', '', unicodedata.normalize('NFKC', s)).replace(',', '')
 
 
+def commercial_claim_lines(md):
+    """Only exempt narrow, explicitly non-assertive headings or instructions."""
+    for line in md.splitlines():
+        line = line.strip()
+        if not line: continue
+        heading = re.sub(r'^#{1,6}\s+(?:\d+[.、]\s*)?', '', line)
+        if re.match(r'^#{1,6}\s', line) and not re.search(r'\d|無料です|適用され|対応しています|保証します|最安|業界初|必ず|全品|全国一律', heading):
+            if re.search(r'確認|注意点|目安|選び方|方法|手順|条件$', line): continue
+        if re.fullmatch(r'(?:最新の)?(?:送料|支払い方法|送料無料条件|割引条件)(?:を|について)(?:公式サイトで)?確認(?:しましょう|してください|する必要があります)[。！]?', line): continue
+        yield line
+
+
 def source_issues(md, source):
     # Exact numeric match is necessary, never sufficient to establish context.
     patterns = r'\d+(?:\.\d+)?(?:円|%|営業日|日間|週間|か月|ヶ月|分|本以上)'
@@ -15,7 +27,7 @@ def source_issues(md, source):
     for token in sorted(set(re.findall(patterns, norm(md)))):
         if token not in source:
             issues.append({'code':'source_numeric_unmatched','message':f'公式取得本文に一致する数値表現なし：{token}'})
-    for line in md.splitlines():
+    for line in commercial_claim_lines(md):
         # A standalone question about certification is not an acquisition claim.
         if re.fullmatch(r'[-*\s]*(?:情報セキュリティに関する)?認証[（(][^）)]+[）)]\s*の取得有無[*\s]*', line):
             continue
@@ -69,5 +81,7 @@ def seo_metadata(product, keyword, genre, title="", article=""):
     if description.endswith('」'): description += 'などを紹介します。'
     else: description += '利用を検討する際の参考にしてください。'
     category = genre if genre in CATEGORIES else CATEGORY_MAP.get(genre, 'その他のサービス')
+    if category == 'ペット用品' and re.search(r'通販|ショップ|NETSHOP', product, re.I) and len(re.findall(r'コーヒー|調理|茶器|キッチン|家庭用品', article)) >= 4 and len(re.findall(r'コーヒー|調理|茶器|キッチン|家庭用品', article)) > 2 * len(re.findall(r'ペット|犬|猫', article)):
+        category = '暮らし・生活用品'
     return {'category': category, 'keyword': keyword[:120], 'seo_title': seo_title,
             'meta_keywords': ','.join(tags), 'tags': tags, 'description': description}

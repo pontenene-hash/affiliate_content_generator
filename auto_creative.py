@@ -23,7 +23,7 @@ HEALTH_SAFETY = (
 
 def _gemini_call(client, model, prompt, max_tokens, **kwargs):
     """Retry temporary Gemini API failures without changing the request."""
-    max_attempts = 5
+    max_attempts = 2
     for attempt in range(max_attempts):
         try:
             response = client.models.generate_content(
@@ -46,7 +46,7 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
             ))
             if not retryable or attempt == max_attempts - 1:
                 raise
-            wait_seconds = min(60, 5 * (2 ** attempt)) + random.uniform(0, 2)
+            wait_seconds = min(10, 3 * (2 ** attempt)) + random.uniform(0, 2)
             print(
                 f'Gemini一時エラー。{attempt + 1}/{max_attempts}回目失敗。'
                 f'{wait_seconds:.1f}秒後に再試行します。',

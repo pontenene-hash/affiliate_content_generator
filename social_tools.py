@@ -45,6 +45,11 @@ def _load_json_response(raw):
         candidates.append(cleaned[start:end + 1])
     for candidate in candidates:
         try:
+            result = json.loads(candidate)
+            if isinstance(result, dict): return result
+        except (ValueError, TypeError):
+            pass
+        try:
             result = json.loads(re.sub(r',\s*([}\]])', r'\1', candidate))
             if isinstance(result, dict):
                 return result

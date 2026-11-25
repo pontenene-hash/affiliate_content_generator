@@ -302,7 +302,9 @@ def review_article(
         )
 
     # Price and commercial terms
-    if PRICE.search(content):
+    from stage4_metadata import commercial_claim_lines
+    commercial_content = "\n".join(commercial_claim_lines(content))
+    if PRICE.search(commercial_content):
         if not isinstance(product_source, str) or not product_source.strip():
             add(
                 'price_source_missing',
@@ -321,7 +323,7 @@ def review_article(
             # Matching amounts are only a mechanical comparison,
             # not proof that prices are current or official.
 
-        if COMMERCIAL_TERMS.search(content):
+        if COMMERCIAL_TERMS.search(commercial_content):
             add(
                 'commercial_terms_review',
                 '送料・割引・購入条件は最新の公式情報を確認してください',

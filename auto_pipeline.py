@@ -35,6 +35,7 @@ DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite'
 
 # SEO記事の目標文字数
 ARTICLE_MIN_CHARS = 5000
+ARTICLE_TARGET_CHARS = 6000
 ARTICLE_MAX_CHARS = 8000
 
 # 長文記事に対応する出力トークン上限
@@ -207,8 +208,8 @@ def gemini_call_with_fallback(call):
         if round_no:
             if not any(m not in unavailable for m in candidates):
                 break
-            print('Gemini 503: 120秒後に再試行します', flush=True)
-            time.sleep(120)
+            print('Gemini 503: 15秒後に再試行します', flush=True)
+            time.sleep(15)
         for model in candidates:
             if model in unavailable:
                 continue
@@ -235,8 +236,8 @@ def gemini_call_with_fallback(call):
                         raise
                     last = exc
                     if attempt == 0:
-                        print('Gemini 503: 30秒後に再試行します', flush=True)
-                        time.sleep(30)
+                        print('Gemini 503: 5秒後に再試行します', flush=True)
+                        time.sleep(5)
     if isinstance(last, EmptyGeminiOutput):
         raise last
     raise RuntimeError('Gemini generation unavailable after bounded retries; retry later') from last
@@ -500,11 +501,11 @@ def extract_editorial_notes(md):
 def expand_article(md, page, keyword, item, affiliate_url):
     """Expand only with unique, source-grounded sections; never pad blindly."""
     md = move_summary_to_end(md)
-    if article_char_count(md) >= ARTICLE_MIN_CHARS:
+    if article_char_count(md) >= ARTICLE_TARGET_CHARS:
         return md
 
     for _ in range(3):
-        if article_char_count(md) >= ARTICLE_MIN_CHARS:
+        if article_char_count(md) >= ARTICLE_TARGET_CHARS:
             break
         existing_headings = [
             line.strip() for line in md.splitlines()
@@ -675,12 +676,13 @@ def run_batch(limit=5, dry_run=False):
 ・未検証の口コミは記事タイトルにも使用せず、商品固有の選び方を中心にする
 ・同じ送料や価格の注意を複数の節で繰り返さない
 ・商品名は短い表示名を使用し、誤字脱字を校正する
-・記事本文は日本語で{ARTICLE_MIN_CHARS}〜{ARTICLE_MAX_CHARS}字を目安に作成する
+・記事本文は日本語で{ARTICLE_TARGET_CHARS}〜{ARTICLE_MAX_CHARS}字を目安に作成する
 ・文字数を増やすためだけの冗長な文章や同じ説明の繰り返しを避ける
 ・検索意図に沿った具体例、比較、選び方、注意点、FAQを充実させる
 ・確認できない商品情報を補って文字数を増やさない
 ・公式本文にない金額、時間、割引条件、店舗、認証、決済方法は推測しない。確認する方法だけ説明する
-・タイトルはMarkdownの#を使用する
+・タイトルはMarkdownの#を使用する。商品名と検索意図、読者が得られる具体的な利点を自然に含める。誇張や定型的な「徹底解説」を避ける。
+・導入は読者の具体的な悩みから始め、結論と記事を読むメリットを伝える。
 ・見出しは##と###を使用する
 ・長所、短所、向かない人、FAQを含める
 ・公開前に確認が必要な情報を明記する
@@ -715,6 +717,8 @@ ASP：{item.get('asp', 'A8.net')}
 
 他の切り口の記事と同じ一般論だけで終わらず、この検索意図を中心に独自の構成にする。
 
+公式取得先：{page["url"]}
+取得日：{datetime.now(timezone.utc).date().isoformat()}
 商品情報（事実はここからのみ）：
 {page['text'][:10000]}
 
@@ -775,7 +779,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:
                 editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
-            editorial_notes += '\n推奨カテゴリー：' + item['genre']
+            editorial_notes += '\n公式取得先：' + page['url'] + '\n取得日（UTC）：' + datetime.now(timezone.utc).date().isoformat() + '\n推奨カテゴリー：' + metadata['category']
             if not quality['approved']:
                 review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
                 review_dir.mkdir(parents=True, exist_ok=True)
@@ -783,7 +787,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 (review_dir / f'{review_key}.md').write_text(md, encoding='utf-8')
                 (review_dir / f'{review_key}.json').write_text(
                     json.dumps({'title': title, 'keyword': keyword, 'angle': angle,
-                                'quality': quality, 'product_name': item['title'], 'review_leads': leads, 'editorial_notes': editorial_notes, 'suggested_category': item['genre'], 'seo_metadata': metadata,
+                                'quality': quality, 'product_name': item['title'], 'review_leads': leads, 'editorial_notes': editorial_notes, 'suggested_category': metadata['category'], 'seo_metadata': metadata,
                                 'created_at': datetime.now(timezone.utc).isoformat()},
                                ensure_ascii=False, indent=2), encoding='utf-8')
                 # Opt-in only: the default remains fail-closed with no WordPress write.
@@ -801,12 +805,12 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                         keyword, title, wp_id, 'held_draft'
                     )
                     creative_status = creative_for_draft(
-                        safe_creative_source(name or page['title']), (name or page['title']) + 'の選び方', name or page['title'], wp_id, link
+                        safe_creative_source(name or page['title']) + '\n## 今回の記事テーマ\n' + angle + 'について公式情報を確認するポイントを紹介します。', title, name or page['title'], wp_id, link
                     )
                     report.append({'title': title, 'status': 'held_wp_draft',
                                    'wp_id': wp_id, 'keyword': keyword,
                                    'angle': angle, 'quality': quality,
-                                   'characters': actual_chars, 'suggested_category': item['genre'],
+                                   'characters': actual_chars, 'suggested_category': metadata['category'],
                                    'creative': creative_status,
                                    'reason': '公開制限付き下書きとして保存。人による承認が必要'})
                 else:
@@ -846,7 +850,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
 
             # Generate the existing creative bundle without altering its format.
             creative_status = creative_for_draft(
-                safe_creative_source(name or page['title']), (name or page['title']) + 'の選び方', name or page['title'], wp_id, link
+                safe_creative_source(name or page['title']) + '\n## 今回の記事テーマ\n' + angle + 'について公式情報を確認するポイントを紹介します。', title, name or page['title'], wp_id, link
             )
 
             report.append({
@@ -856,7 +860,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 'keyword': keyword,
                 'angle': angle,
                 'creative': creative_status,
-                'suggested_category': item['genre']
+                'suggested_category': metadata['category']
             })
 
             completed += 1
