@@ -534,6 +534,52 @@ def article_html(md):
     )
 
 
+def full_quality(md, page, item, link):
+    from integrated_quality import extra_issues
+    from stage5_ads import ad_issues, mark_sponsored
+    rendered_html = mark_sponsored(article_html(md), link)
+    from affiliate_article_guard import review_article
+    quality = review_article(md, product_name=item['title'] or page['title'],
+                             genre=item['genre'], affiliate_url=link,
+                             product_source=page['text'])
+    # A short article is never automatically approved just because
+    # the external quality checker accepts its other claims.
+    from stage4_metadata import source_issues
+    additional = extra_issues(md) + source_issues(md, page['text']) + ad_issues(md, rendered_html, link)
+    if additional:
+        quality = dict(quality, approved=False, status='quality_review_required', issues=list(quality.get('issues') or []) + additional)
+    actual_chars = article_char_count(md)
+    if actual_chars < ARTICLE_MIN_CHARS:
+        quality = dict(quality)
+        quality['approved'] = False
+        quality['issues'] = list(quality.get('issues') or []) + [{
+            'code': 'article_too_short',
+            'message': f'本文{actual_chars}文字。目標{ARTICLE_MIN_CHARS}文字未満のため要確認'
+        }]
+    repeats = duplicate_headings(md)
+    repeated_paragraphs = duplicate_paragraphs(md)
+    if repeats or repeated_paragraphs:
+        quality = dict(quality)
+        quality['approved'] = False
+        quality['issues'] = list(quality.get('issues') or []) + [{
+            'code': 'duplicate_article_content',
+            'message': (
+                f'重複見出し{len(repeats)}件、重複段落'
+                f'{repeated_paragraphs}件。公開前に修正してください'
+            )
+        }]
+    if article_char_count(md) > ARTICLE_MAX_CHARS:
+        quality = dict(quality)
+        quality['approved'] = False
+        quality['issues'] = list(quality.get('issues') or []) + [{
+            'code': 'article_too_long',
+            'message': f'本文{article_char_count(md)}文字。目標上限超過のため要確認'
+        }]
+    if not quality['approved']:
+        quality['status'] = 'quality_review_required'
+    return quality
+
+
 def run_batch(limit=5, dry_run=False):
     from article_history import (
         load_history,
@@ -602,6 +648,7 @@ def run_batch(limit=5, dry_run=False):
 ・文字数を増やすためだけの冗長な文章や同じ説明の繰り返しを避ける
 ・検索意図に沿った具体例、比較、選び方、注意点、FAQを充実させる
 ・確認できない商品情報を補って文字数を増やさない
+・公式本文にない金額、時間、割引条件、店舗、認証、決済方法は推測しない。確認する方法だけ説明する
 ・タイトルはMarkdownの#を使用する
 ・見出しは##と###を使用する
 ・長所、短所、向かない人、FAQを含める
@@ -669,14 +716,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
 
-            md = insert_ads(md, link)
-            md, repair_notes = repair_article(md, page['text'], link, llm, article_char_count, item['title'], item['genre'])
-            md, more_notes = extract_editorial_notes(move_summary_to_end(md))
-            md = insert_ads(md, link)
-            if article_char_count(md) < ARTICLE_MIN_CHARS:
-                md = insert_ads(expand_article(md, page, keyword, item, link), link)
-            md, final_notes = extract_editorial_notes(md)
-            editorial_notes = '\n'.join(filter(None, [editorial_notes, repair_notes, more_notes, final_notes]))
+            md = insert_ads(move_summary_to_end(md), link, item['title'])
             rendered_html = mark_sponsored(article_html(md), link)
             title = next(
                 (
@@ -687,45 +727,19 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 item['title'] or page['title']
             )
 
-            from affiliate_article_guard import review_article
-            quality = review_article(md, product_name=item['title'] or page['title'],
-                                     genre=item['genre'], affiliate_url=link,
-                                     product_source=page['text'])
-            # A short article is never automatically approved just because
-            # the external quality checker accepts its other claims.
-            from stage4_metadata import source_issues, seo_metadata
-            metadata = seo_metadata(item['title'], keyword, item['genre'], title, md)
-            metadata['review_issues'] = []
-            additional = extra_issues(md) + source_issues(md, page['text']) + ad_issues(md, rendered_html, link)
-            if additional:
-                quality = dict(quality, approved=False, status='quality_review_required', issues=list(quality.get('issues') or []) + additional)
+            quality = full_quality(md, page, item, link)
+            from stage5_repair import revise_checked_article
+            md, quality, audit = revise_checked_article(
+                md, quality, page['text'], item['title'] or page['title'], keyword,
+                llm, lambda text: full_quality(text, page, item, link),
+                lambda text: insert_ads(move_summary_to_end(extract_editorial_notes(text)[0]), link, item['title']),
+                article_char_count)
+            editorial_notes += '\nAI再検査：' + audit
+            rendered_html = mark_sponsored(article_html(md), link)
+            title = next((line[2:].strip() for line in md.splitlines() if line.startswith('# ')), title)
             actual_chars = article_char_count(md)
-            if actual_chars < ARTICLE_MIN_CHARS:
-                quality = dict(quality)
-                quality['approved'] = False
-                quality['issues'] = list(quality.get('issues') or []) + [{
-                    'code': 'article_too_short',
-                    'message': f'本文{actual_chars}文字。目標{ARTICLE_MIN_CHARS}文字未満のため要確認'
-                }]
-            repeats = duplicate_headings(md)
-            repeated_paragraphs = duplicate_paragraphs(md)
-            if repeats or repeated_paragraphs:
-                quality = dict(quality)
-                quality['approved'] = False
-                quality['issues'] = list(quality.get('issues') or []) + [{
-                    'code': 'duplicate_article_content',
-                    'message': (
-                        f'重複見出し{len(repeats)}件、重複段落'
-                        f'{repeated_paragraphs}件。公開前に修正してください'
-                    )
-                }]
-            if article_char_count(md) > ARTICLE_MAX_CHARS:
-                quality = dict(quality)
-                quality['approved'] = False
-                quality['issues'] = list(quality.get('issues') or []) + [{
-                    'code': 'article_too_long',
-                    'message': f'本文{article_char_count(md)}文字。目標上限超過のため要確認'
-                }]
+            from stage4_metadata import seo_metadata
+            metadata = seo_metadata(item['title'], keyword, item['genre'], title, md)
             metadata['review_issues'] = quality.get('issues', [])
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:

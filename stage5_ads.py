@@ -6,27 +6,28 @@ from urllib.parse import urlsplit
 MARKER = re.compile(r'[-_\s]*\[\s*A8[ _-]*AD\s*\][-_]*', re.I)
 CTA = '公式サイトでサービス・商品情報を確認する（広告）'
 
-def insert_ads(md, link):
+def insert_ads(md, link, product=""):
     p = urlsplit(link)
     if p.scheme != 'https' or not p.hostname or p.username or p.password or re.search(r'[\s<>"\'()]', link):
         raise ValueError('登録広告URLの形式を確認してください')
     # Remove previous deterministic CTAs and known placeholders, not arbitrary source links.
-    md = re.sub(r'(?m)^\[' + re.escape(CTA) + r'\]\([^\n]*\)\s*$', '', md)
+    md = re.sub(r'(?m)^\[[^\n\]]+\]\(' + re.escape(link) + r'\)[ \t]*$', '', md)
     md = MARKER.sub('\n\n', md)
     md = re.sub(r'\n{3,}', '\n\n', md).strip()
     existing = md.count(link)
     if existing:
         return md + '\n'  # Existing model links remain subject to the guard.
-    ad = f'[{CTA}]({link})'
+    name = re.sub(r'[\[\]\n\r<>]', '', product).strip()
+    labels = [f'{name}の詳細を確認する（広告）', f'{name}の利用条件を確認する（広告）', f'{name}が自分に合うか公式情報を確認する（広告）'] if name else [CTA]*3
     heads = list(re.finditer(r'(?m)^##\s+\S', md))
     positions = []
     if len(heads) >= 2:
         positions.append(heads[0].start())
     if len(heads) >= 4:
         positions.append(heads[len(heads)//2].start())
-    for pos in sorted(set(positions), reverse=True):
-        md = md[:pos].rstrip() + '\n\n' + ad + '\n\n' + md[pos:]
-    return md.rstrip() + '\n\n' + ad + '\n'
+    for i, pos in reversed(list(enumerate(sorted(set(positions))))):
+        md = md[:pos].rstrip() + '\n\n' + f'[{labels[i]}]({link})' + '\n\n' + md[pos:]
+    return md.rstrip() + '\n\n' + f'[{labels[2]}]({link})' + '\n'
 
 def ad_issues(md, html, link):
     from bs4 import BeautifulSoup
