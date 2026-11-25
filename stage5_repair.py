@@ -20,12 +20,16 @@ def revise_checked_article(md, quality, source, product, keyword, llm, check, no
         if len(re.findall(r'^#\s+\S',candidate,re.M)) != 1 or product not in candidate:
             return md, quality, '修正案のタイトル・商品名不適合。原稿保持。'
         heads = re.findall(r'^##\s+(.+)$',candidate,re.M)
-        if not heads or heads[-1].strip() != 'まとめ' or not 5000 <= count(candidate) <= 8000:
+        if not heads or heads[-1].strip() != 'まとめ' or not 500 <= count(candidate) <= 8000:
             return md, quality, '修正案の構成・文字数不適合。原稿保持。'
         after = check(candidate)
         old = Counter(i.get('code') for i in before)
         new = Counter(i.get('code') for i in after.get('issues', []))
-        if new - old or sum(new.values()) >= sum(old.values()):
+        # Accept partial progress without trading away safety or substantial content.
+        safety = lambda c: Counter({k:v for k,v in c.items() if k != 'article_too_short'})
+        if (safety(new) - safety(old) or count(candidate) < min(count(md), 5000)
+                or (sum(safety(new).values()) >= sum(safety(old).values())
+                    and not (count(candidate) > count(md) and new['article_too_short'] <= old['article_too_short']))):
             return md, quality, '新規指摘または改善不足。原稿保持。'
         return candidate, after, f'修正採用：指摘{sum(old.values())}件→{sum(new.values())}件。人による確認は必須。'
     except Exception:

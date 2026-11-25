@@ -33,7 +33,13 @@ def source_issues(md, source):
             continue
         if re.search(r'送料無料|返金|保証|認証|支払い方法|営業時間|納期|割引|最安|業界初', line):
             issues.append({'code':'source_context_review','message':'条件・適用範囲を公式情報と照合：'+line[:180]})
-    return issues[:30]
+    # Aggregate by issue type, retaining all distinct evidence excerpts.
+    grouped = {}
+    for issue in issues:
+        grouped.setdefault(issue['code'], [])
+        if issue['message'] not in grouped[issue['code']]:
+            grouped[issue['code']].append(issue['message'])
+    return [{'code': code, 'message': '\n'.join(messages)} for code, messages in grouped.items()]
 
 
 CATEGORY_MAP = {
@@ -81,7 +87,7 @@ def seo_metadata(product, keyword, genre, title="", article=""):
     if description.endswith('」'): description += 'などを紹介します。'
     else: description += '利用を検討する際の参考にしてください。'
     category = genre if genre in CATEGORIES else CATEGORY_MAP.get(genre, 'その他のサービス')
-    if category == 'ペット用品' and re.search(r'通販|ショップ|NETSHOP', product, re.I) and len(re.findall(r'コーヒー|調理|茶器|キッチン|家庭用品', article)) >= 4 and len(re.findall(r'コーヒー|調理|茶器|キッチン|家庭用品', article)) > 2 * len(re.findall(r'ペット|犬|猫', article)):
+    if category == 'ペット用品' and re.search(r'通販|ショップ|NETSHOP', product, re.I) and len(set(re.findall(r'コーヒー|調理|茶器|キッチン|家庭用品', article))) >= 3 and not re.search(r'ペット|犬|猫', keyword.replace(product, '')):
         category = '暮らし・生活用品'
     return {'category': category, 'keyword': keyword[:120], 'seo_title': seo_title,
             'meta_keywords': ','.join(tags), 'tags': tags, 'description': description}

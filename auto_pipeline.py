@@ -423,7 +423,7 @@ def duplicate_paragraphs(md):
 def unique_expansion(md, extra):
     """Accept only complete new sections without repeated headings/paragraphs."""
     extra = re.sub(r'(?m)^#\s+.*$', '', extra).strip()
-    if not extra or article_char_count(extra) < 150:
+    if not extra or not re.match(r'^##\s+\S', extra) or re.search(r'^##\s*(?:まとめ|結論|おわりに|総まとめ)(?:\s|$|[：:])', extra, re.M) or article_char_count(extra) < 150:
         return ''
 
     existing = set(heading_list(md))
@@ -515,6 +515,7 @@ def expand_article(md, page, keyword, item, affiliate_url):
             extra = llm(f"""あなたは日本語SEO記事の編集者です。
 次の原稿にまだ存在しない新しいMarkdownセクションのみ出力してください。
 既存の見出し、文章、結論、タイトルを再出力しないでください。
+不足文字数は約{max(0, ARTICLE_TARGET_CHARS - article_char_count(md))}字です。新しい具体的な判断手順を2〜3節で補い、送料や価格の同じ説明を繰り返さないでください。
 既存見出し：{json.dumps(existing_headings, ensure_ascii=False)}
 記事の切り口に合う新規の比較軸、具体的な選び方、確認手順、FAQなどを選んでください。\n1セクション内で読者の判断に役立つ具体的な手順や条件分岐を丁寧に説明してください。\n根拠が足りない場合は無理に文字数を増やさず、要確認として残してください。
 見出しは##または###で始めてください。
@@ -747,6 +748,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             prompt += '\n実在口コミの原文と掲載条件は未検証です。口コミ・評判を調査済みと称さず、選び方や確認方法を中心にしてください。'
             # Generate SEO article
             from stage5_ads import insert_ads, ad_issues, mark_sponsored
+            prompt += '\nH1は簡潔な商品名と検索意図で構成し、案件の宣伝用長文をタイトルに含めない。価格帯の推測（数百円、数千円等）も禁止。送料条件は一箇所にまとめ、FAQや結論で繰り返さない。'
             md = polish(llm(prompt), original_name, name)
             md = move_summary_to_end(expand_article(md, page, keyword, item, link))
             md, editorial_notes = extract_editorial_notes(md)
@@ -774,7 +776,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             title = next((line[2:].strip() for line in md.splitlines() if line.startswith('# ')), title)
             actual_chars = article_char_count(md)
             from stage4_metadata import seo_metadata
-            metadata = seo_metadata(name, keyword.replace(original_name, name) if original_name else keyword, item['genre'], title, md)
+            metadata = seo_metadata(name, name + ' ' + angle.replace('・', ' '), item['genre'], title, md)
             metadata['review_issues'] = quality.get('issues', [])
             # Always retain review leads for human verification; never treat snippets as quotes.
             if leads:
