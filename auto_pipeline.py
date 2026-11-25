@@ -561,11 +561,10 @@ def creative_for_draft(md, title, product_name, wp_id, link):
     """Save existing SNS/image/video prompt bundle, even for held drafts."""
     try:
         from auto_creative import build_bundle, save_bundle
-        bundle = build_bundle(
+        bundle = gemini_call_with_fallback(lambda model: build_bundle(
             md, title, product_name, wp_id, link,
-            config('GEMINI_API_KEY'), gemini_candidates()[0],
-            fallback_models=gemini_candidates()[1:]
-        )
+            config('GEMINI_API_KEY'), model
+        ))
         save_bundle(bundle)
         return 'saved'
     except Exception as exc:
@@ -627,7 +626,9 @@ def full_quality(md, page, item, link):
     return quality
 
 
-def run_batch(limit=5, dry_run=False):
+def run_batch(limit=5, dry_run=False, preview=False):
+    if preview and (limit != 1 or dry_run):
+        raise ValueError('Preview requires limit=1 and dry_run=False')
     from article_history import (
         load_history,
         next_topics,
@@ -813,6 +814,26 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             if leads:
                 editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
             editorial_notes += '\n公式ガイド取得先：' + '、'.join(page.get('guides', [])) + '\n公式取得先：' + page['url'] + '\n取得日（UTC）：' + datetime.now(timezone.utc).date().isoformat() + '\n推奨カテゴリー：' + metadata['category']
+            if preview:
+                dest = Path('preview_outputs')
+                dest.mkdir(parents=True, exist_ok=True)
+                (dest / 'article.md').write_text(md, encoding='utf-8')
+                (dest / 'article.html').write_text(rendered_html, encoding='utf-8')
+                details = {'title': title, 'keyword': keyword, 'angle': angle,
+                           'quality': quality, 'characters': actual_chars,
+                           'seo_metadata': metadata, 'editorial_notes': editorial_notes,
+                           'competitors': competitors, 'revision_audit': audit,
+                           'official_url': page['url'], 'official_guides': page.get('guides', [])}
+                (dest / 'article.json').write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding='utf-8')
+                creative_status = creative_for_draft(
+                    safe_creative_source(name or page['title']) + '\n## 今回の記事テーマ\n' + angle + 'について公式情報を確認するポイントを紹介します。',
+                    title, name or page['title'], 0, link)
+                report.append({'title': title, 'status': 'preview_only', 'quality': quality,
+                               'characters': actual_chars, 'creative': creative_status,
+                               'keyword': keyword, 'angle': angle})
+                completed += 1
+                continue
+
             if not quality['approved']:
                 review_dir = Path(config('REVIEW_OUTPUT_DIR', 'review_outputs'))
                 review_dir.mkdir(parents=True, exist_ok=True)
