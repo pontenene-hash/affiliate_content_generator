@@ -16,13 +16,18 @@ def commercial_claim_lines(md):
         if re.match(r'^#{1,6}\s', line) and not re.search(r'\d|無料です|適用され|対応しています|保証します|最安|業界初|必ず|全品|全国一律', heading):
             if re.search(r'確認|注意点|目安|選び方|方法|手順|条件$', line): continue
         if re.fullmatch(r'(?:最新の)?(?:送料|支払い方法|送料無料条件|割引条件)(?:を|について)(?:公式サイトで)?確認(?:しましょう|してください|する必要があります)[。！]?', line): continue
+        # Exempt only complete, non-assertive instructions; never exempt a
+        # factual claim merely because a later sentence says to check it.
+        if re.fullmatch(r'(?:最新の)?(?:送料|送料無料条件|支払い方法|割引条件|返品条件|保証条件|納期)(?:や(?:送料|支払い方法|割引条件|返品条件|保証条件|納期))*を(?:公式サイト|ご利用ガイド|注文画面|カート画面)で確認(?:しましょう|してください|することをおすすめします)[。！]?', line):
+            continue
         yield line
 
 
 def source_issues(md, source):
     # Exact numeric match is necessary, never sufficient to establish context.
     patterns = r'\d+(?:\.\d+)?(?:円|%|営業日|日間|週間|か月|ヶ月|分|本以上)'
-    source = norm(source)
+    source_raw = unicodedata.normalize('NFKC', source)
+    source = norm(source_raw)
     issues = []
     for token in sorted(set(re.findall(patterns, norm(md)))):
         if token not in source:
@@ -33,6 +38,16 @@ def source_issues(md, source):
             continue
         if re.search(r'送料無料|返金|保証|認証|支払い方法|営業時間|納期|割引|最安|業界初', line):
             issues.append({'code':'source_context_review','message':'条件・適用範囲を公式情報と照合：'+line[:180]})
+    # Matching numbers alone cannot establish the kind of charge. Keep
+    # ambiguous claims on hold, even if the same number occurs elsewhere.
+    labels = r'送料|配送料|商品価格|販売価格|月額|年額|手数料|料金|割引'
+    for line in commercial_claim_lines(md):
+        for match in re.finditer(r'(' + labels + r')\s*(?:は|が|：|:|税込|税抜|\s)*([0-9]+(?:\.[0-9]+)?(?:円|%))', norm(line)):
+            label, amount = match.groups()
+            # Require local proximity, without crossing sentence boundaries.
+            windows = re.split(r'[。！？\n]', source_raw)
+            if amount in source and not any(re.search(re.escape(label) + r'[^。！？]{0,24}' + re.escape(amount) + r'(?![0-9])', norm(w)) for w in windows):
+                issues.append({'code':'source_numeric_context_review','message':f'数値と条件の対応を確認：{label}{amount}'})
     # Aggregate by issue type, retaining all distinct evidence excerpts.
     grouped = {}
     for issue in issues:
