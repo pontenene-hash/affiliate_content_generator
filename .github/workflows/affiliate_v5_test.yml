@@ -4,6 +4,10 @@ name: Affiliate V5 Safety Test
 on:
   workflow_dispatch:
     inputs:
+      run_live:
+        description: "Run one real API preview after offline tests"
+        type: boolean
+        default: false
       preview_product:
         description: "Registered product name (blank = automatic)"
         required: false
@@ -31,7 +35,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install V2 validation dependencies
-        run: python -m pip install -r requirements.txt pytest
+        run: python -m pip install -r requirements.txt pytest PyYAML
 
       - name: Check Python syntax
         run: |
@@ -184,7 +188,7 @@ jobs:
       - name: Run V2 offline validation
         run: |
           python -m py_compile section_engine.py stage4_metadata.py auto_pipeline.py
-          python -m pytest -q --ignore=test_real_articles.py --junitxml=validation-results.xml
+          python -m pytest -q --junitxml=validation-results.xml
 
       - name: Upload V2 validation results
         if: always()
@@ -205,7 +209,7 @@ jobs:
           echo "Scheduled article generation was not executed."
 
   live-preview:
-    if: github.ref == 'refs/heads/feature-affiliate-v2-validation'
+    if: github.ref == 'refs/heads/feature-affiliate-v2-validation' && inputs.run_live == true
     needs: test-v5
     runs-on: ubuntu-latest
     timeout-minutes: 20
