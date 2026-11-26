@@ -186,7 +186,8 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
         ),
     )
     blog = _blog_prompts(article, title, product)
-    snippet = _clean_article_snippet(article, title)
+    from stage20_quality import public_snippet
+    snippet = public_snippet(article) if brief else _clean_article_snippet(article, title)
     gbp = {
         'post': (
             f'【PR】{title}\n\n'
@@ -227,6 +228,8 @@ def save_bundle(bundle, root='creative_outputs'):
     (dest / 'all_prompts.json').write_text(
         json.dumps(bundle, ensure_ascii=False, indent=2), encoding='utf-8'
     )
+    if 'creative_export_review' in bundle:
+        (dest / 'creative_review.json').write_text(json.dumps(bundle['creative_export_review'], ensure_ascii=False, indent=2), encoding='utf-8')
     blog = '\n\n'.join(
         f"## {x['purpose']} — {x['suggested_section']}\n"
         f"ファイル名：{x['filename']}\n{x['prompt']}"

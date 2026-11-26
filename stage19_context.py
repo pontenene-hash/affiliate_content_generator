@@ -8,7 +8,7 @@ def creative_context(article, product, fallback):
     headings='\n'.join(re.findall(r'^#{2,3}\s+(.+)$',article,re.M))
     topics=[label for pattern,label in TOPICS if re.search(pattern,headings+'\n'+article)]
     if len(topics)<3: return fallback
-    return '# '+product+'の選び方\n\n'+ '\n\n'.join('## '+t+'\n確認する項目として紹介し、結果や条件を断定しない。' for t in topics)
+    return '# '+product+'の選び方\n\n'+ '\n\n'.join('## '+t for t in topics)
 
 def expansion_prompt(product, genre, heading, section, current, feedback, sources, missing):
     tags=classify(product,genre)

@@ -20,10 +20,11 @@ def build_review_report(audit, product, records, hosts, now):
         reasons=[]
         if 'medical' in c['kinds']: reasons.append('専門家確認')
         if c.get('counter_candidates'): reasons.append('矛盾候補')
+        if c.get('context_flags'): reasons.append('否定・条件・不確実性の文脈確認')
         if any(s['scope_review'] for s in sources): reasons.append('条件・例外確認')
         if any(s['freshness']=='stale_or_future' for s in sources): reasons.append('取得日時確認')
         if c['status']!='exact_candidate': reasons.append('根拠不足')
         priority='high' if reasons else 'normal'
-        rows.append({'claim':c['claim'],'priority':priority,'reasons':reasons or ['原文・文脈確認'],'sources':sources,'human_review_required':True})
+        rows.append({'claim':c['claim'],'priority':priority,'reasons':reasons or ['原文・文脈確認'],'sources':sources,'context_flags':c.get('context_flags',[]),'human_review_required':True})
     rows.sort(key=lambda r:r['priority']!='high')
     return {'approved':False,'human_review_required':True,'total':len(rows),'high_priority':sum(r['priority']=='high' for r in rows),'rows':rows,'limitations':'条件候補は周辺180文字のルール検出。情報源の真正性・意味・医学的妥当性は未確認。'}

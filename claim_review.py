@@ -1,6 +1,8 @@
 """Advisory exact-text evidence retrieval, never semantic approval."""
 import re
 from evidence_ledger import check
+from stage21_review import context_flags
+from stage20_quality import candidate_sources
 from claim_countercheck import countercheck
 from source_review import source_review, followup_plan
 from review_report import build_review_report
@@ -17,7 +19,7 @@ def audit_claims(article, product, records, hosts, now):
             if not kinds: continue
             age = 1 if 'commercial' in kinds else 7
             matches = [e for e in records if check(sentence,product,e,hosts,now,age)=='traceable_excerpt_review_required']
-            results.append({'claim': sentence, 'kinds': kinds, 'source_ids': [e.id for e in matches], 'status': 'exact_candidate' if matches else 'unverified', 'human_review_required': True, 'counter_candidates': countercheck(sentence, product, records, hosts, now), 'source_review': source_review(sentence, product, records, hosts, now, age)})
+            results.append({'claim': sentence, 'kinds': kinds, 'source_ids': [e.id for e in matches], 'status': 'exact_candidate' if matches else 'unverified', 'human_review_required': True, 'retrieval_candidates': candidate_sources(sentence, product, records, hosts, now, age), 'counter_candidates': countercheck(sentence, product, records, hosts, now), 'source_review': source_review(sentence, product, records, hosts, now, age), 'context_flags': context_flags(sentence, product, records, hosts, now, age)})
     audit = {'claims': results, 'followup_queries': followup_plan(product, results), 'approved': False, 'limitations': 'Keyword extraction and exact matching only; numeric counter-candidates only; no semantic entailment or definitive contradiction detection.'}
     audit['review_report'] = build_review_report(audit, product, records, hosts, now)
     return audit

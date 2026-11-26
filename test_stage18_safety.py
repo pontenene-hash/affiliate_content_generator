@@ -5,7 +5,7 @@ import yaml
 def test_manual_only_and_read_only():
     w=yaml.load(Path('.github/workflows/affiliate_v5_test.yml').read_text(),Loader=yaml.BaseLoader)
     assert set(w['on'])=={'workflow_dispatch'}
-    assert w['permissions']=={'contents':'read'}
+    assert w['permissions']=={'contents':'read','actions':'read'}
     assert w['on']['workflow_dispatch']['inputs']['run_live']['default']=='false'
     assert 'inputs.run_live == true' in w['jobs']['live-preview']['if']
     assert w['jobs']['live-preview']['needs']=='test-v5'

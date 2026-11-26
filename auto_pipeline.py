@@ -253,8 +253,8 @@ def gemini_call_with_fallback(call):
                         if attempt == 0:
                             time.sleep(5)
                         continue
-                    from operation_review import error_kind
-                    if code not in ('408', '500', '502', '503', '504') and error_kind(exc) != 'transient':
+                    from stage25_30 import retry_kind
+                    if retry_kind(exc) != 'retry':
                         raise
                     last = exc
                     if attempt == 0:
@@ -385,7 +385,8 @@ def wp_draft(title, html, review_reason='自動生成記事：人による公開
     # A reused post may have been approved by a human, but never published by this process.
     if data.get('status') != 'draft':
         raise RuntimeError('既存投稿が下書きではありません。投稿ID: ' + str(data.get('id')))
-    return int(data['id'])
+    from stage25_30 import valid_draft_response
+    return valid_draft_response(data)
 
 
 def article_char_count(md):
@@ -573,6 +574,11 @@ def creative_for_draft(md, title, product_name, wp_id, link, original_article=No
         ))
         from cross_review import cross_review
         bundle['cross_review'] = cross_review(original_article if original_article is not None else md, bundle)
+        from stage23_creative import audit_bundle
+        from stage25_30 import repair_cta
+        bundle, repairs = repair_cta(bundle)
+        bundle['creative_export_review'] = audit_bundle(bundle)
+        bundle['creative_export_review']['automatic_cta_repairs'] = repairs
         save_bundle(bundle)
         return 'saved'
     except Exception as exc:
@@ -807,6 +813,9 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             # Generate SEO article
             from stage5_ads import insert_ads, ad_issues, mark_sponsored
             prompt += '\nH1は簡潔な商品名と検索意図で構成し、案件の宣伝用長文をタイトルに含めない。価格帯の推測（数百円、数千円等）も禁止。送料条件は一箇所にまとめ、FAQや結論で繰り返さない。'
+            from stage20_quality import initial_sections
+            def generate_initial(text):
+                return initial_sections(article_llm, text, name or page['title'], item['genre'], preparation.strategy)
             storage_path = os.getenv('PONTE_REVIEW_STORAGE', '').strip()
             storage_status = 'disabled'
             generation_reused = False
@@ -817,13 +826,16 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 storage_status = storage.observe(name or page['title'], page, stamp)
                 identity = [name, keyword, link, page['url'], page.get('sources', []),
                             os.getenv('GEMINI_MODEL', DEFAULT_GEMINI_MODEL),
-                            hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+                            __import__('stage22_resume').code_fingerprint(Path(__file__).parent),
                             os.getenv('PONTE_STORAGE_SCOPE', 'isolated')]
                 # Fetch timestamps are deliberately excluded; content and URL remain bound.
                 identity[4] = [(x['url'], x['text']) for x in identity[4]]
-                raw_md, generation_reused = storage.generate(identity, prompt, article_llm, stamp)
+                from stage22_resume import ResumableCalls
+                resume_calls = ResumableCalls(storage, [identity, 'preview' if preview else 'production'], article_meter)
+                article_llm.generate = resume_calls
+                raw_md, generation_reused = storage.generate([identity, 'preview' if preview else 'production'], prompt, generate_initial, stamp)
             else:
-                raw_md = article_llm(prompt)
+                raw_md = generate_initial(prompt)
             md = polish(raw_md, original_name, name)
             md = move_summary_to_end(md)  # One combined revision handles length and quality.
             md, editorial_notes = extract_editorial_notes(md)
@@ -867,7 +879,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             dynamic_audit = dynamic_claim_review(md, name or page['title'], source_records, {__import__('urllib.parse', fromlist=['urlsplit']).urlsplit(page['url']).hostname}, datetime.now(timezone.utc))
             metadata['article_call_metrics'] = article_meter.report()
             metadata['provider_metrics'] = provider_report(provider_events)
-            metadata['storage_review'] = {'source_change': storage_status, 'initial_generation_reused': generation_reused}
+            metadata['storage_review'] = {'source_change': storage_status, 'initial_generation_reused': generation_reused, 'individual_calls_reused': resume_calls.reused if storage_path else 0}
             metadata['claim_audit'] = dynamic_audit['audit']
             metadata['dynamic_claim_review'] = {k: v for k, v in dynamic_audit.items() if k != 'audit'}
             from release_bridge import release_audit, attach_release_audit
@@ -1011,12 +1023,17 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 'status': 'error',
                 'reason': str(exc)[:250]
             })
+            from stage25_30 import retry_kind
+            if retry_kind(exc) == 'stop_batch':
+                break
 
         time.sleep(1)
 
     db.close()
 
+    from stage24_batch import summarize
     return {
+        'batch_summary': summarize(report, limit),
         'processed': completed,
         'available_verified_items': len(items),
         'results': report,

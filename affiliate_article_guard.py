@@ -154,21 +154,19 @@ def _has_unverified_review_reference(text):
     if not QUOTE.search(text):
         return False
 
-    # A neutral explanation about unavailable testimonials is not itself
-    # a claim that positive or negative testimonials exist.
-    remaining = NEGATIVE_REVIEW.sub('', text)
-
-    remaining = re.sub(
-        r'(?:口コミ|評判|レビュー|体験談)'
-        r'.{0,30}(?:公式サイトで確認してください|'
-        r'確認することをおすすめします|'
-        r'掲載状況をご確認ください)',
-        '',
-        remaining,
-        flags=re.I,
-    )
-
-    return bool(QUOTE.search(remaining))
+    from stage20_quality import neutral_review_line
+    for line in text.splitlines():
+        if neutral_review_line(line):
+            continue
+        for sentence in re.split(r'(?<=[。！？])', line):
+            if _review_text_requires_verification(sentence):
+                return True
+            remaining = NEGATIVE_REVIEW.sub('', sentence)
+            remaining = remaining.replace('特定の口コミを鵜呑みにせず、', '')
+            remaining = re.sub(r'(?:口コミ|評判|レビュー|体験談).{0,30}(?:公式サイトで確認してください|確認することをおすすめします|掲載状況をご確認ください)', '', remaining, flags=re.I)
+            if QUOTE.search(remaining):
+                return True
+    return False
 
 
 def review_article(

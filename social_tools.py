@@ -527,6 +527,7 @@ def generate_social_plan(client, model, article, call_llm, affiliate_url='',
         'Instagram・TikTokはプロフィールへ誘導。URLを創作しない。\n'
         '動画は音声ナレーションなし、タイピング風字幕と明るい権利確認済みBGM。\n'
         '各sceneのnarrationは音声ではなく45文字以内の画面テロップ。\n'
+        '制作指示や審査メモは投稿文・字幕に転記しない。各スライドとシーンは具体的な異なる確認項目を割り当てる。\n'
         'JSONオブジェクトだけを返し、Markdownコードフェンスや説明文を付けない。\n'
         f'制作品質基準：{COMMON_QUALITY}\n'
         f'販売・案内条件：{promotion_context}\n'
