@@ -19,5 +19,5 @@ def route(name, genre, context='', *, evidence_count=0, comparison=False, call_b
     if sensitive:
         return Route('evidence_first_sections',tags,min(call_budget,8))
     if comparison:
-        return Route('comparison_first',tags,min(call_budget,4))
+        return Route('comparison_first',tags,min(call_budget,6))
     return Route('single_then_targeted_repair',tags,min(call_budget,3))

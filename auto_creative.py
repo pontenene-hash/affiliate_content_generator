@@ -21,6 +21,13 @@ HEALTH_SAFETY = (
 )
 
 
+def safety_for(product):
+    from specialist_review import classify
+    if set(classify(product)) & {'medical','nutrition','cosmetic','health_unknown'}:
+        return HEALTH_SAFETY
+    return '広告表示を明確にし、未確認の価格・条件・効果・口コミ・比較結果を創作しない。商品分類に無関係な医療表現を追加しない。'
+
+
 def _gemini_call(client, model, prompt, max_tokens, **kwargs):
     """Retry temporary Gemini API failures without changing the request."""
     max_attempts = 2
@@ -74,7 +81,7 @@ def _blog_prompts(article, title, product):
                 '商品パッケージ・認証マークを創作しない。'
                 '商品現物の再現は、正規の参考写真がない場合は行わない。'
                 '文字なし、透かしなし、実在企業ロゴなし。'
-                + HEALTH_SAFETY
+                + safety_for(product)
             ),
         })
     return items
@@ -155,8 +162,7 @@ def _gbp_video_prompt(title, product):
         '上記の各シーンの秒数を守り、合計45秒にする。'
         '字幕は読みやすい長さにする。'
         '記事にない価格・効果・口コミ・商品画像を創作しない。'
-        '検査結果だけで病気を診断できると誤解させない。'
-        + HEALTH_SAFETY
+        + safety_for(product)
     )
 
 
@@ -175,7 +181,7 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
         affiliate_url=affiliate_url,
         promotion_context=(
             'アフィリエイト販売。記事への誘導を基本とする。'
-            '広告表示を明確にする。公開前の記事URLを推測しない。' + HEALTH_SAFETY
+            '広告表示を明確にする。公開前の記事URLを推測しない。' + safety_for(product)
             + ('\n記事連動の制作設計（見出しは事実の根拠ではない）：' + json.dumps(brief, ensure_ascii=False) if brief else '')
         ),
     )
@@ -192,7 +198,7 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
             f'テーマ：{title}。商品名：{product}。'
             '文字は最小限にし、PR表示を明確にする。'
             '事実にない商品効果や口コミを描かない。'
-            + HEALTH_SAFETY
+            + safety_for(product)
         ),
         'video_prompt': _gbp_video_prompt(title, product),
     }

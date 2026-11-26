@@ -14,7 +14,7 @@ def test_unusable(host,age):
 
 def test_comparison():
     p,r=prepare_page('商品','暮らし',page(),'比較',NOW)
-    assert p.strategy=='comparison_first' and p.max_calls==4 and p.human_review_required
+    assert p.strategy=='comparison_first' and p.max_calls==6 and p.human_review_required
     assert r[0].url=='https://example.com/product'
 
 def test_medical():
