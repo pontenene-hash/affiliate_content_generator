@@ -26,7 +26,7 @@ def main():
          patch.object(pipeline, 'record_saved_draft', forbidden), \
          patch.object(article_history, 'save_article', forbidden), \
          patch.object(product_registry, 'write_items', forbidden):
-        result = pipeline.run_batch(limit=1, preview=True)
+        result = pipeline.run_batch(limit=1, preview=True, preview_product=os.environ.get("PREVIEW_PRODUCT", "").strip())
     (dest / 'run_report.json').write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding='utf-8')
     rows = result.get('results', [])
     if len(rows) != 1 or rows[0].get('status') != 'preview_only' or rows[0].get('creative') != 'saved':
