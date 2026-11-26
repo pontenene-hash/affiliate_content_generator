@@ -3,6 +3,12 @@ name: Affiliate V5 Safety Test
 
 on:
   workflow_dispatch:
+    inputs:
+      preview_product:
+        description: "Registered product name (blank = automatic)"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -218,6 +224,7 @@ jobs:
           GH_HISTORY_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_BRANCH: ${{ github.ref_name }}
+          PREVIEW_PRODUCT: ${{ inputs.preview_product }}
           PIPELINE_DB: /tmp/ponte-preview.sqlite3
         run: python run_live_preview.py
       - name: Upload live preview results
