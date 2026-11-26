@@ -161,6 +161,11 @@ def _gbp_video_prompt(title, product):
 
 
 def build_bundle(article, title, product, post_id, affiliate_url, api_key, model):
+    from creative_grounding import build_brief
+    try:
+        brief = build_brief(article, product, affiliate_url=affiliate_url)
+    except ValueError:
+        brief = None  # Preserve existing output for articles with few headings.
     client = genai.Client(api_key=api_key)
     plan = generate_social_plan(
         client,
@@ -170,7 +175,8 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
         affiliate_url=affiliate_url,
         promotion_context=(
             'アフィリエイト販売。記事への誘導を基本とする。'
-            '広告表示を明確にする。' + HEALTH_SAFETY
+            '広告表示を明確にする。公開前の記事URLを推測しない。' + HEALTH_SAFETY
+            + ('\n記事連動の制作設計（見出しは事実の根拠ではない）：' + json.dumps(brief, ensure_ascii=False) if brief else '')
         ),
     )
     blog = _blog_prompts(article, title, product)
@@ -203,7 +209,10 @@ def build_bundle(article, title, product, post_id, affiliate_url, api_key, model
 
     # AFFILIATE_QUALITY_V5_HOOK
     from affiliate_quality_v5 import review_bundle
-    return review_bundle(bundle)
+    reviewed = review_bundle(bundle)
+    if brief:
+        reviewed['grounded_brief'] = brief
+    return reviewed
 
 
 def save_bundle(bundle, root='creative_outputs'):
