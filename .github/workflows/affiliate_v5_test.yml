@@ -8,6 +8,14 @@ on:
         description: "Run one real API preview after offline tests"
         type: boolean
         default: false
+      save_checkpoint:
+        description: "Save raw preview checkpoint (private repository only)"
+        type: boolean
+        default: false
+      resume_run_id:
+        description: "Optional previous validation run ID for checkpoint recovery"
+        type: string
+        default: ""
       preview_product:
         description: "Registered product name (blank = automatic)"
         required: false
@@ -16,6 +24,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test-v5:
@@ -25,12 +34,12 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           persist-credentials: false
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
@@ -192,7 +201,7 @@ jobs:
 
       - name: Upload V2 validation results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: affiliate-v2-validation-results
           path: validation-results.xml
@@ -214,13 +223,22 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - run: python -m pip install -r requirements.txt
+      - name: Restore isolated preview checkpoint
+        if: inputs.save_checkpoint == true && inputs.resume_run_id != '' && github.event.repository.private == true
+        uses: actions/download-artifact@v5
+        with:
+          name: ponte-preview-checkpoint
+          path: .ponte-preview-cache
+          run-id: ${{ inputs.resume_run_id }}
+          github-token: ${{ github.token }}
+      - run: mkdir -p .ponte-preview-cache
       - name: Generate one article and creative preview without WordPress
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -230,13 +248,24 @@ jobs:
           GITHUB_BRANCH: ${{ github.ref_name }}
           PREVIEW_PRODUCT: ${{ inputs.preview_product }}
           PIPELINE_DB: /tmp/ponte-preview.sqlite3
+          PONTE_REVIEW_STORAGE: ${{ inputs.save_checkpoint && github.event.repository.private && '.ponte-preview-cache/review.sqlite3' || '' }}
+          PONTE_STORAGE_SCOPE: validation-preview
         run: python run_live_preview.py
       - name: Upload live preview results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: affiliate-v2-live-preview
           path: |
             preview_outputs/
             creative_outputs/post_0/
           if-no-files-found: warn
+
+      - name: Save isolated preview checkpoint
+        if: always() && inputs.save_checkpoint == true && github.event.repository.private == true
+        uses: actions/upload-artifact@v5
+        with:
+          name: ponte-preview-checkpoint
+          path: .ponte-preview-cache/review.sqlite3
+          retention-days: 1
+          if-no-files-found: ignore
