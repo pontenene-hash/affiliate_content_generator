@@ -51,6 +51,8 @@ def test_failure_summary_reports_unknown_without_leaking_details():
 
 
 def test_five_item_dry_run_routes_into_dashboard_without_wp(monkeypatch, tmp_path):
+    import article_history
+    monkeypatch.setattr(article_history, '_config', lambda: None)
     monkeypatch.chdir(tmp_path)
     items = [{'title': f'商品{i}', 'genre': '暮らし',
               'product_url': f'https://example.com/product/{i}',
