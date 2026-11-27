@@ -6,7 +6,7 @@ from unittest.mock import Mock
 class BatchRecovery(unittest.TestCase):
     def test_history_failure_stops_both_paths(self):
         tree=ast.parse(Path(__file__).with_name('auto_pipeline.py').read_text())
-        fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='run_batch')
+        fn=next(n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name=='_run_batch')
         calls=[]
         for n in ast.walk(fn):
             if isinstance(n,ast.Try) and any(isinstance(x,ast.Expr) and isinstance(x.value,ast.Call) and isinstance(x.value.func,ast.Name) and x.value.func.id=='record_saved_draft' for x in n.body):

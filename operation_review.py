@@ -12,7 +12,8 @@ def screen_external(value):
     return [i for i,p in enumerate(RULES) if re.search(p,text,re.I)]
 
 def error_kind(exc):
-    code = getattr(exc,'status_code',None) or getattr(exc,'code',None)
+    from stage44_operations import status_code
+    code = status_code(exc)
     if isinstance(code,int):
         if code == 429: return 'rate_limit'
         if code in (401,403): return 'authorization'

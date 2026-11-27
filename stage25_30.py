@@ -24,7 +24,8 @@ def repair_cta(bundle):
 
 def retry_kind(exc):
     from operation_review import error_kind
-    code=str(getattr(exc,'code',None) or getattr(exc,'status_code',None) or '')
+    from stage44_operations import status_code
+    code=str(status_code(exc) or '')
     if code=='404': return 'model_missing'
     if code in ('401','403','429'): return 'stop_batch'
     if code in ('408','500','502','503','504'): return 'retry'

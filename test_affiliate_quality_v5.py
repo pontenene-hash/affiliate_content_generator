@@ -17,7 +17,7 @@ def run():
     else:
         scenes = [
             {'duration': '4秒', 'caption': '表紙', 'narration': '表紙'},
-            {'duration': '34秒', 'caption': '内容', 'narration': '内容'},
+            {'duration': '37秒', 'caption': '内容', 'narration': '内容'},
             {'duration': '4秒', 'caption': 'CTA', 'narration': 'CTA'},
         ]
 
@@ -135,8 +135,8 @@ def run():
             for scene in new_scenes
         ]
 
-        assert sum(durations) == 42, (
-            platform + ' must total 42 seconds'
+        assert sum(durations) == 45, (
+            platform + ' must total 45 seconds'
         )
 
     # 2回実行しても結果が変わらない
@@ -202,7 +202,7 @@ def run():
 
     print(
         'PASS: bundle structure, 9 slides, '
-        '42-second videos, 45-second GBP brief, '
+        '45-second videos, 45-second GBP brief, '
         'affiliate URL, idempotence, installer backup'
     )
 

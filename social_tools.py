@@ -191,7 +191,9 @@ def _ensure_link(value, url):
     if not url:
         return value
     value = _strip_affiliate_link(value, url)
-    return value + ('\n' if value else '') + url
+    # A direct affiliate link must not be presented as a blog article link.
+    value = re.sub(r'(?m)^(?:詳細はこちら|詳しくはこちら|記事はこちら|ブログはこちら|記事を読む|ブログを読む|広告主の商品ページ)[：:]?[ \t]*$', '', value).strip()
+    return value + ('\n' if value else '') + '広告主の商品ページ：' + url
 
 
 def _fix_video_timing(item):
@@ -199,11 +201,11 @@ def _fix_video_timing(item):
     if len(scenes) < 3:
         return
     middle = len(scenes) - 2
-    durations = [4] + [34 // middle + (1 if i < 34 % middle else 0)
+    durations = [4] + [37 // middle + (1 if i < 37 % middle else 0)
                        for i in range(middle)] + [4]
     for scene, duration in zip(scenes, durations):
         scene['duration'] = f'{duration}秒'
-    item['total_duration'] = '42秒'
+    item['total_duration'] = '45秒'
 
 
 def _ensure_video_scenes(item, media_key, article, promotion_context='アフィリエイト販売'):
@@ -361,9 +363,9 @@ def _build_creative_prompts_original(plan, article):
                                                  MEDIA_FILENAMES['youtube_thumbnail']),
         'tiktok_cover': _image_prompt_item(tiktok.get('cover_title'), tiktok.get('cover_body'), '1080×1920', vertical, vf,
                                            MEDIA_FILENAMES['tiktok_cover']),
-        'reel_video': _video_prompt_item(reel, '1080×1920', '42秒', MEDIA_FILENAMES['reel_video'], True),
-        'youtube_video': _video_prompt_item(youtube, '1920×1080', '42秒', MEDIA_FILENAMES['youtube_video'], False),
-        'tiktok_video': _video_prompt_item(tiktok, '1080×1920', '42秒', MEDIA_FILENAMES['tiktok_video'], True),
+        'reel_video': _video_prompt_item(reel, '1080×1920', '45秒', MEDIA_FILENAMES['reel_video'], True),
+        'youtube_video': _video_prompt_item(youtube, '1920×1080', '45秒', MEDIA_FILENAMES['youtube_video'], False),
+        'tiktok_video': _video_prompt_item(tiktok, '1080×1920', '45秒', MEDIA_FILENAMES['tiktok_video'], True),
         'instagram_carousel': [_carousel_prompt(_as_dict(s, 'body'), i) for i, s in
                                enumerate(_as_list(_as_dict(plan.get('carousel')).get('slides'))[:9], 1)],
         'article_section_images': [_article_section_prompt(s, i) for i, s in enumerate(sections, 1)],
@@ -499,8 +501,8 @@ def _validate_social_plan(data):
         raise ValueError('カルーセルまたは記事セクション画像が不足しています。')
     for key in ('reel', 'youtube', 'tiktok'):
         scenes = data[key].get('scenes', [])
-        if len(scenes) < 3 or sum(int(re.search(r'\d+', x['duration']).group()) for x in scenes) != 42:
-            raise ValueError(f'{key}の動画構成が42秒ではありません。')
+        if len(scenes) < 3 or sum(int(re.search(r'\d+', x['duration']).group()) for x in scenes) != 45:
+            raise ValueError(f'{key}の動画構成が45秒ではありません。')
 
 
 def _generate_social_plan_legacy(client, model, article, call_llm, affiliate_url=''):
@@ -562,7 +564,7 @@ def generate_social_plan(client, model, article, call_llm, affiliate_url='',
             '動画',
             ('reel', 'youtube', 'tiktok'),
             'Instagramリール、YouTube、TikTokの3種類を作成。'
-            'それぞれ42秒、冒頭表紙と最後のCTAを含む5〜8シーン。'
+            'それぞれ45秒、冒頭表紙と最後のCTAを含む5〜8シーン。'
             '各シーンにscene_type、caption、narration、visualを入れる。'
             'リールのハッシュタグは5個。\n'
             '出力JSON形式：\n'

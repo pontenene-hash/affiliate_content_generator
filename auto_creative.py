@@ -33,7 +33,8 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
     max_attempts = 2
     for attempt in range(max_attempts):
         try:
-            response = client.models.generate_content(
+            from provider_metrics import measured
+            response = measured(model, lambda: client.models.generate_content(
                 model=model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
@@ -41,7 +42,7 @@ def _gemini_call(client, model, prompt, max_tokens, **kwargs):
                     temperature=kwargs.get('temperature', 0.35),
                     response_mime_type=kwargs.get('response_mime_type'),
                 ),
-            )
+            ))
             if not response.text:
                 raise ValueError('Gemini returned an empty creative plan')
             return response.text

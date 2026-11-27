@@ -4,6 +4,11 @@ name: Affiliate V5 Safety Test
 on:
   workflow_dispatch:
     inputs:
+      preview_limit:
+        description: "Number of real preview articles (1–5)"
+        type: choice
+        options: ["1", "2", "3", "4", "5"]
+        default: "1"
       run_live:
         description: "Run one real API preview after offline tests"
         type: boolean
@@ -221,7 +226,7 @@ jobs:
     if: github.ref == 'refs/heads/feature-affiliate-v2-validation' && inputs.run_live == true
     needs: test-v5
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v5
         with:
@@ -239,13 +244,14 @@ jobs:
           run-id: ${{ inputs.resume_run_id }}
           github-token: ${{ github.token }}
       - run: mkdir -p .ponte-preview-cache
-      - name: Generate one article and creative preview without WordPress
+      - name: Generate article and creative previews without WordPress
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
           GH_HISTORY_TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_BRANCH: ${{ github.ref_name }}
+          PREVIEW_LIMIT: ${{ inputs.preview_limit }}
           PREVIEW_PRODUCT: ${{ inputs.preview_product }}
           PIPELINE_DB: /tmp/ponte-preview.sqlite3
           PONTE_REVIEW_STORAGE: ${{ inputs.save_checkpoint && github.event.repository.private && '.ponte-preview-cache/review.sqlite3' || '' }}
@@ -258,7 +264,7 @@ jobs:
           name: affiliate-v2-live-preview
           path: |
             preview_outputs/
-            creative_outputs/post_0/
+            creative_outputs/post_*/
           if-no-files-found: warn
 
       - name: Save isolated preview checkpoint

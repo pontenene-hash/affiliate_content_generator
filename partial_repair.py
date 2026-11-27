@@ -3,12 +3,18 @@ import re
 from collections import Counter
 
 def repair_duplicates(md, quality, check, count):
-    parts = re.split(r'(\n\s*\n)', md)
+    # Fail closed for complex markup: do not rewrite structured documents.
+    if re.search(r'(?m)^\s*(?:`{3,}|~{3,})|<!--|-->|<[^>]+>', md):
+        return md,quality,'構造保護：部分修正対象外'
+    parts = re.split(r'(\n[^\S\n]*\n)', md)
     removed = 0
-    for i in range(2,len(parts),2):
-        a,b=parts[i-2].strip(),parts[i].strip()
-        if a==b and len(b)>=30 and not re.search(r'[#<>\[\]`|]|https?://|広告|PR|注意|相談',b,re.I) and '\n' not in b:
-            parts[i]=''; removed+=1
+    previous = None
+    for i in range(0,len(parts),2):
+        raw=parts[i]; b=raw.strip()
+        if previous==b and len(b)>=30 and not re.search(r'[#<>\[\]`|]|https?://|広告|PR|注意|相談|[「」『』]|口コミ',b,re.I) and '\n' not in b and not re.match(r'\s*(?:[-+*>]|\d+[.)]| {4}|\t)',raw):
+            parts[i]=''; parts[i-1]=''; removed+=1
+        else:
+            previous=b
     if not removed: return md,quality,'部分修正対象なし'
     candidate=''.join(parts)
     try:

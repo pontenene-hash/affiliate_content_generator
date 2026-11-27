@@ -656,10 +656,10 @@ def validate_bundle(bundle):
 
         if (
             len(scenes) < 3
-            or sum(durations) != 42
+            or sum(durations) != 45
         ):
             raise ValueError(
-                key + ' must be exactly 42 seconds'
+                key + ' must be exactly 45 seconds'
             )
 
     prompts = plan['creative_prompts']

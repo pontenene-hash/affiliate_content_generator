@@ -7,7 +7,7 @@ URL = 'https://example.com/item?ref=abc&campaign=1'
 def fixture():
     slides = [{'title': '商品について', 'body': '詳しくは記事をご確認ください。'} for _ in range(9)]
     slides[0] = {'title': '全身のがんを早期発見', 'body': '利用者の声：必ず治る。'}
-    scenes = [{'duration': '14秒', 'caption': '記事のポイント', 'narration': '利用前に確認してください。'} for _ in range(3)]
+    scenes = [{'duration': duration, 'caption': '記事のポイント', 'narration': '利用前に確認してください。'} for duration in ('4秒','37秒','4秒')]
     scenes[0]['caption'] = '全身のがんを早期発見'
     carousel_prompts = [{'catch_copy': x['title'], 'body_text': x['body'], 'sub_copy': x['body'], 'prompt': '表示「' + x['title'] + '」と「' + x['body'] + '」'} for x in slides]
     return {'affiliate_url': URL, 'social_plan': {
@@ -46,7 +46,7 @@ def main():
     assert '早期発見' not in output['social_plan']['x_posts'][0]['text']
     assert output['social_plan']['x_posts'][0]['text'].count(URL) == 1
     assert review_bundle(output) == output, 'Review must be idempotent'
-    print('PASS: safety, no truncation, 9 slides, 42s videos, GBP 45s, URL, prompt consistency, idempotence')
+    print('PASS: safety, no truncation, 9 slides, 45s videos, GBP 45s, URL, prompt consistency, idempotence')
 
 if __name__ == '__main__':
     main()

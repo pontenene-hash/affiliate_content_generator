@@ -50,7 +50,7 @@ def _fallback_line(article):
 NEW_ENSURE_VIDEO = r'''
 def _ensure_video_scenes(item, media_key, article,
                          promotion_context='アフィリエイト販売'):
-    """Build 42-second scenes with an opening and a final CTA."""
+    """Build 45-second scenes with an opening and a final CTA."""
     scenes = [_as_dict(scene, 'narration')
               for scene in _as_list(item.get('scenes'))]
     title = _plain_text(item.get('title') or _article_title(article), 28)

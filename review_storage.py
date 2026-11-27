@@ -23,12 +23,26 @@ class ReviewStorage:
             payload = json.loads(row[0]); age = now - datetime.fromisoformat(row[2])
             if digest(payload) != row[1] or not timedelta(0) <= age <= ttl: return None
             return payload
-        except (ValueError, TypeError): return None
+        except (ValueError, TypeError, OverflowError): return None
 
     def _write(self, key, payload, now):
         if now.utcoffset() is None: raise ValueError('timezone required')
         with sqlite3.connect(self.path) as db:
             db.execute('INSERT OR REPLACE INTO snapshots VALUES (?,?,?,?)', (key,json.dumps(payload,ensure_ascii=False),digest(payload),now.isoformat()))
+
+    def prune(self, now):
+        """Remove expired or invalid snapshots; retain unknown namespaces."""
+        if now.utcoffset() is None: raise ValueError('timezone required')
+        removed = 0
+        with sqlite3.connect(self.path) as db:
+            for key, saved in db.execute('SELECT key,saved FROM snapshots').fetchall():
+                ttl = timedelta(hours=24) if key.startswith('generation:v1:') else timedelta(days=30) if key.startswith('source:') else None
+                if ttl is None: continue
+                try: valid = timedelta(0) <= now - datetime.fromisoformat(saved) <= ttl
+                except (ValueError, TypeError, OverflowError): valid = False
+                if not valid:
+                    removed += db.execute('DELETE FROM snapshots WHERE key=? AND saved=?', (key,saved)).rowcount
+        return removed
 
     def observe(self, product, page, now):
         # Only compare freshly fetched content; do not substitute cached evidence.

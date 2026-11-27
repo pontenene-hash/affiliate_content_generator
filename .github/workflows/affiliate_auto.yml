@@ -520,6 +520,35 @@ jobs:
               )
           PY
 
+      - name: Add privacy-safe run summary
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from operation_dashboard import (
+              render_github_summary,
+              render_missing_report_summary,
+          )
+
+          try:
+              with open('affiliate_run_report.json', encoding='utf-8') as report_file:
+                  report = json.load(report_file)
+              summary = render_github_summary(
+                  report, os.environ.get('JOB_STATUS')
+              )
+          except Exception:
+              summary = render_missing_report_summary(
+                  os.environ.get('JOB_STATUS')
+              )
+          summary_path = os.environ.get('GITHUB_STEP_SUMMARY')
+          if summary_path:
+              with open(summary_path, 'a', encoding='utf-8') as summary_file:
+                  summary_file.write(summary)
+          PY
+
       - name: Upload run report
         if: always()
         uses: actions/upload-artifact@v4

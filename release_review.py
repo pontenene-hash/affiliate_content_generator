@@ -4,7 +4,7 @@ from operation_review import error_kind
 from cross_review import revision_review
 
 def recover(call, *, attempts=2, sleep=time.sleep):
-    if not 1 <= attempts <= 3: raise ValueError('attempts')
+    if type(attempts) is not int or not 1 <= attempts <= 3: raise ValueError('attempts')
     for i in range(attempts):
         try: return call()
         except Exception as e:
@@ -22,7 +22,17 @@ def similarity(a,b):
 
 def review_quotes(article, sources):
     # Only explicitly attributed testimonial quotations; source existence is not authenticity.
-    quotes=re.findall(r'(?:口コミ|レビュー|体験談)[^\n。]{0,40}?[「『]([^」』]+)[」』]',article)
+    quotes=[]
+    pattern=r'(?:口コミ|レビュー|体験談)[^。！？]{0,40}?[「『]([^」』]+)[」』]'
+    end=-1
+    for match in re.finditer(pattern,article):
+        if match.start()<end: continue
+        quotes.append(match.group(1))
+        end=match.end()
+        while True:
+            continuation=re.match(r'[ \t\n>＊*・\-、]{0,20}[「『]([^」』]+)[」』]',article[end:])
+            if not continuation: break
+            quotes.append(continuation.group(1)); end+=continuation.end()
     return [{'quote':q,'candidate_urls':[s['url'] for s in sources if s.get('verified_by_human') is True and s.get('url','').startswith('https://') and q in s.get('text','')], 'human_review_required':True} for q in quotes]
 
 def partial_patch(article, old, new, quality):

@@ -14,6 +14,7 @@ from urllib.parse import urlparse, urljoin
 import requests
 from bs4 import BeautifulSoup
 from google import genai
+from stage44_operations import safe_error, status_code, wordpress_endpoint, reject_redirect
 
 
 GENRES = [
@@ -214,7 +215,7 @@ def gemini_call_with_fallback(call):
     try:
         listed = {str(m.name).removeprefix('models/') for m in client.models.list()}
     except Exception as exc:
-        code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
+        code = str(status_code(exc) or '')
         if code in ('400', '401', '403', '429'):
             raise
         print('Gemini model listing unavailable; using explicit allowlist')
@@ -241,7 +242,7 @@ def gemini_call_with_fallback(call):
                     print(f'Gemini success: {model}', flush=True)
                     return result
                 except Exception as exc:
-                    code = str(getattr(exc, 'code', getattr(exc, 'status_code', '')))
+                    code = str(status_code(exc) or '')
                     if code == '404':
                         unavailable.add(model)
                         print(f'Gemini 404: {model} を今回の候補から除外', flush=True)
@@ -352,11 +353,11 @@ def wp_review_gate_check():
     password = config('WP_APP_PASSWORD')
     if not all([base, username, password]):
         raise RuntimeError('WordPress接続設定が不足しています')
-    endpoint = public_url(base + '/wp-json/ponte/v1/review-gate')
-    response = requests.get(endpoint, auth=(username, password), timeout=TIMEOUT)
-    response.raise_for_status()
+    endpoint = public_url(wordpress_endpoint(base, '/wp-json/ponte/v1/review-gate'))
+    response = requests.get(endpoint, auth=(username, password), timeout=TIMEOUT, allow_redirects=False)
+    reject_redirect(response)
     data = response.json()
-    if not (data.get('active') is True and data.get('idempotent_drafts') is True
+    if not isinstance(data, dict) or not (data.get('active') is True and data.get('idempotent_drafts') is True
             and data.get('human_only_approval') is True):
         raise RuntimeError('PONTE確認プラグインv0.3以上を確認できません')
     return data
@@ -368,7 +369,7 @@ def wp_draft(title, html, review_reason='自動生成記事：人による公開
         raise ValueError('下書き保存には64文字の一意キーが必要です')
     gate = wp_review_gate_check()
     base = config('WP_SITE_URL').rstrip('/')
-    endpoint = public_url(base + '/wp-json/ponte/v1/held-drafts')
+    endpoint = public_url(wordpress_endpoint(base, '/wp-json/ponte/v1/held-drafts'))
     response = requests.post(
         endpoint,
         auth=(config('WP_USERNAME'), config('WP_APP_PASSWORD')),
@@ -376,11 +377,11 @@ def wp_draft(title, html, review_reason='自動生成記事：人による公開
               'review_reason': review_reason[:3000],
               'idempotency_key': idempotency_key,
               **({'editorial_metadata': metadata} if metadata and gate.get('editorial_metadata') is True else {})},
-        timeout=40,
+        timeout=40, allow_redirects=False,
     )
-    response.raise_for_status()
+    reject_redirect(response)
     data = response.json()
-    if data.get('review') not in ('needs_review', 'approved') or not data.get('id'):
+    if not isinstance(data, dict) or data.get('review') not in ('needs_review', 'approved') or not data.get('id'):
         raise RuntimeError('WordPressの確認状態を検証できません。管理画面で確認してください')
     # A reused post may have been approved by a human, but never published by this process.
     if data.get('status') != 'draft':
@@ -579,10 +580,12 @@ def creative_for_draft(md, title, product_name, wp_id, link, original_article=No
         bundle, repairs = repair_cta(bundle)
         bundle['creative_export_review'] = audit_bundle(bundle)
         bundle['creative_export_review']['automatic_cta_repairs'] = repairs
+        from stage31_45 import audit_export
+        bundle['stage31_45_review'] = audit_export(bundle)
         save_bundle(bundle)
         return 'saved'
     except Exception as exc:
-        return 'error: ' + str(exc)[:160]
+        return 'error: ' + safe_error(exc)
 
 
 def article_html(md):
@@ -643,10 +646,28 @@ def full_quality(md, page, item, link):
 
 
 def run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
+    from run_controls import AttemptBudget, budget_scope, batch_overview
+    raw = os.getenv('PONTE_GENERATION_ATTEMPT_LIMIT', '').strip()
+    budget = AttemptBudget(int(raw) if raw else None)
+    from batch_safety import exclusive_lock, review_queue
+    with exclusive_lock(".ponte-batch.lock"), budget_scope(budget):
+        result = _run_batch(limit, dry_run, preview, preview_product)
+    result['generation_attempt_budget'] = budget.report()
+    result['operations_overview'] = batch_overview(result['results'])
+    result['review_queue'] = review_queue(result['results'])
+    from operation_dashboard import build_dashboard
+    result['operations_dashboard'] = build_dashboard(result)
+    return result
+
+
+def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
     if preview_product and not preview:
         raise ValueError("Product selection is preview-only")
-    if preview and (limit != 1 or dry_run):
-        raise ValueError('Preview requires limit=1 and dry_run=False')
+    if preview:
+        from stage31_45 import preview_limit
+        limit = preview_limit(limit)
+        if dry_run:
+            raise ValueError('Preview requires dry_run=False')
     from article_history import (
         load_history,
         next_topics,
@@ -674,6 +695,10 @@ def run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
     completed = 0
 
     for item, key, angle, keyword, focus in tasks:
+        from run_controls import active_budget
+        budget = active_budget.get()
+        if budget is not None and budget.report()['remaining'] == 0:
+            break
         if completed >= limit:
             break
 
@@ -823,6 +848,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 from review_storage import ReviewStorage
                 storage = ReviewStorage(storage_path)
                 stamp = datetime.now(timezone.utc)
+                storage.prune(stamp)
                 storage_status = storage.observe(name or page['title'], page, stamp)
                 identity = [name, keyword, link, page['url'], page.get('sources', []),
                             os.getenv('GEMINI_MODEL', DEFAULT_GEMINI_MODEL),
@@ -879,6 +905,8 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             dynamic_audit = dynamic_claim_review(md, name or page['title'], source_records, {__import__('urllib.parse', fromlist=['urlsplit']).urlsplit(page['url']).hostname}, datetime.now(timezone.utc))
             metadata['article_call_metrics'] = article_meter.report()
             metadata['provider_metrics'] = provider_report(provider_events)
+            from run_controls import freshness
+            metadata['source_freshness'] = freshness(datetime.now(timezone.utc).isoformat() if source_records else None, datetime.now(timezone.utc), storage_status)
             metadata['storage_review'] = {'source_change': storage_status, 'initial_generation_reused': generation_reused, 'individual_calls_reused': resume_calls.reused if storage_path else 0}
             metadata['claim_audit'] = dynamic_audit['audit']
             metadata['dynamic_claim_review'] = {k: v for k, v in dynamic_audit.items() if k != 'audit'}
@@ -895,6 +923,10 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             release_check['history_index_enabled'] = bool(index_path)
             quality = attach_release_audit(quality, release_check)
             metadata['release_review'] = release_check
+            from editorial_dashboard import dashboard
+            metadata['editorial_dashboard'] = dashboard(md, intent_plan, dynamic_audit['audit'], release_check, quality)
+            from growth_advice import advisory
+            metadata['growth_advice'] = advisory(md, title, keyword, link, previous)
             metadata['review_issues'] = quality.get('issues', [])
             editorial_notes += '\n生成方針（参考）：' + preparation.strategy + f' / 記事生成呼び出し {article_llm.calls}/{article_llm.limit}'
             editorial_notes += '\n取得資料（事実照合は人が実施）：' + json.dumps([{'id': e.id, 'url': e.url, 'fetched_at': e.fetched_at.isoformat(), 'sha256': hashlib.sha256(e.excerpt.encode()).hexdigest()} for e in source_records], ensure_ascii=False)
@@ -903,7 +935,8 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 editorial_notes += '\n口コミ候補（原文・掲載条件未確認）：\n' + '\n'.join(x['url'] for x in leads)
             editorial_notes += '\n公式ガイド取得先：' + '、'.join(page.get('guides', [])) + '\n公式取得先：' + page['url'] + '\n取得日（UTC）：' + datetime.now(timezone.utc).date().isoformat() + '\n推奨カテゴリー：' + metadata['category']
             if preview:
-                dest = Path('preview_outputs')
+                from stage31_45 import preview_paths
+                dest, preview_id = preview_paths(limit, completed)
                 dest.mkdir(parents=True, exist_ok=True)
                 (dest / 'article.md').write_text(md, encoding='utf-8')
                 (dest / 'article.html').write_text(rendered_html, encoding='utf-8')
@@ -915,7 +948,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                 (dest / 'article.json').write_text(json.dumps(details, ensure_ascii=False, indent=2), encoding='utf-8')
                 creative_status = creative_for_draft(
                     safe_creative_source(name or page['title']) + '\n## 今回の記事テーマ\n' + angle + 'について公式情報を確認するポイントを紹介します。',
-                    title, name or page['title'], 0, link, original_article=md)
+                    title, name or page['title'], preview_id, link, original_article=md)
                 report.append({'title': title, 'status': 'preview_only', 'quality': quality,
                                'characters': actual_chars, 'creative': creative_status, 'revision_audit': audit,
                                'keyword': keyword, 'angle': angle})
@@ -949,7 +982,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                         )
                     except Exception as history_exc:
                         report.append({'title': title, 'status': 'error', 'wp_id': wp_id,
-                                       'reason': 'WordPress下書き保存済み・履歴保存失敗: ' + str(history_exc)[:160]})
+                                       'reason': 'WordPress下書き保存済み・履歴保存失敗: ' + safe_error(history_exc)})
                         break
                     if draft_index is not None:
                         draft_index.save(index_scope, key, md)
@@ -992,7 +1025,7 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
                     'wp_id': wp_id,
                     'reason': (
                         'WordPress下書きは保存済みですが履歴保存に失敗: '
-                        + str(history_exc)[:160]
+                        + safe_error(history_exc)
                     )
                 })
                 break
@@ -1021,10 +1054,11 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
             report.append({
                 'title': item['title'],
                 'status': 'error',
-                'reason': str(exc)[:250]
+                'reason': safe_error(exc)
             })
             from stage25_30 import retry_kind
-            if retry_kind(exc) == 'stop_batch':
+            from run_controls import BudgetExhausted
+            if isinstance(exc, BudgetExhausted) or retry_kind(exc) == 'stop_batch':
                 break
 
         time.sleep(1)
@@ -1039,6 +1073,10 @@ Markdown形式で記事本文のみ出力してください。見出しや箇条
         'results': report,
         'planned': len(tasks),
         'topic_inventory': inventory,
+        # The snapshot predates this batch's writes; do not present it as live SEO data.
+        'editorial_planning': __import__('editorial_planning').planning_report(
+            [dict(row, id=row.get('key')) for row in history if isinstance(row, dict)],
+            datetime.now(timezone.utc)),
         'batch_status': ('no_enabled_products' if not items else 'topics_exhausted' if not tasks else 'processed')
     }
 
@@ -1058,6 +1096,8 @@ if __name__ == '__main__':
         '--dry-run',
         action='store_true'
     )
+    parser.add_argument('--dashboard-html', default='',
+                        help='Write a local, read-only batch report to this path')
 
     args = parser.parse_args()
 
@@ -1065,6 +1105,10 @@ if __name__ == '__main__':
         min(max(args.limit, 1), 5),
         args.dry_run
     )
+    if args.dashboard_html:
+        from operation_dashboard import render_html
+        from batch_safety import atomic_text
+        atomic_text(Path(args.dashboard_html), render_html(result['operations_dashboard']))
 
     print(
         json.dumps(

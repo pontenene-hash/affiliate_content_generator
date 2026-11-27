@@ -64,7 +64,7 @@ def generate_social_plan(client, model, article, call_llm, affiliate_url='',
             '動画',
             ('reel', 'youtube', 'tiktok'),
             'Instagramリール、YouTube、TikTokの3種類を作成。'
-            'それぞれ42秒、冒頭表紙と最後のCTAを含む5〜8シーン。'
+            'それぞれ45秒、冒頭表紙と最後のCTAを含む5〜8シーン。'
             '各シーンにscene_type、caption、narration、visualを入れる。'
             'リールのハッシュタグは5個。\\n'
             '出力JSON形式：\\n'

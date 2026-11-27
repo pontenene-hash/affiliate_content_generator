@@ -61,28 +61,46 @@ def _config():
 def _url(cfg):
     return f'https://api.github.com/repos/{cfg[1]}/contents/{HISTORY_PATH}'
 
+def validated_articles(payload):
+    """Reject corrupt history instead of treating it as an empty first run."""
+    if not isinstance(payload, dict) or not isinstance(payload.get('articles'), list):
+        raise ValueError('記事履歴の形式が不正です。復旧してから再実行してください')
+    records = payload['articles']
+    keys = set()
+    for row in records:
+        if not isinstance(row, dict) or not isinstance(row.get('key'), str) or not row['key'].strip():
+            raise ValueError('記事履歴のキーが不正です。復旧してから再実行してください')
+        if row['key'] in keys:
+            raise ValueError('記事履歴のキーが重複しています。確認が必要です')
+        keys.add(row['key'])
+    return records
+
+
 def load_history():
     cfg = _config()
     if not cfg:
         path = Path(HISTORY_PATH)
-        return json.loads(path.read_text(encoding='utf-8')).get('articles', []) if path.exists() else []
+        return validated_articles(json.loads(path.read_text(encoding='utf-8'))) if path.exists() else []
     token, _, branch = cfg
     response = requests.get(_url(cfg), params={'ref': branch},
         headers={'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}, timeout=20)
     if response.status_code == 404:
         return []
     response.raise_for_status()
-    return json.loads(base64.b64decode(response.json()['content']).decode('utf-8')).get('articles', [])
+    return validated_articles(json.loads(base64.b64decode(response.json()['content']).decode('utf-8')))
 
 def save_article(record):
+    validated_articles({'articles': [record]})
     cfg = _config()
     if not cfg:
         path = Path(HISTORY_PATH)
         path.parent.mkdir(parents=True, exist_ok=True)
-        existing = load_history()
-        if not any(x.get('key') == record['key'] for x in existing):
-            existing.append(record)
-        path.write_text(json.dumps({'articles': existing}, ensure_ascii=False, indent=2)+'\n', encoding='utf-8')
+        from batch_safety import exclusive_lock, atomic_json
+        with exclusive_lock(path.with_suffix('.lock')):
+            existing = load_history()
+            if not any(x.get('key') == record['key'] for x in existing):
+                existing.append(record)
+            atomic_json(path, {'articles': existing})
         return
     token, _, branch = cfg
     headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/vnd.github+json'}
@@ -92,7 +110,7 @@ def save_article(record):
             response.raise_for_status()
         if response.status_code == 200:
             data = response.json()
-            current = json.loads(base64.b64decode(data['content']).decode('utf-8')).get('articles', [])
+            current = validated_articles(json.loads(base64.b64decode(data['content']).decode('utf-8')))
         else:
             data, current = None, []
         if any(x.get('key') == record['key'] for x in current):
