@@ -6,8 +6,10 @@ This module never writes articles, WordPress data, or scheduler settings.
 
 import copy
 import re
+from medical_expression_rules import MEDICAL_RISK_PATTERN
 
 RISK = re.compile(
+    MEDICAL_RISK_PATTERN + r'|' +
     r'全身のがん|早期発見|早期がん|人間ドック(?:の代わり|より)|'
     r'がんリスク(?:を|が|の)?(?:チェック|判定|分かる)|'
     r'(?:必ず|絶対)(?:治る|改善)|'

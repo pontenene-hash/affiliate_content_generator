@@ -6,6 +6,7 @@ network requests. High-risk medical/health claims require human review.
 """
 
 import re
+from medical_expression_rules import MEDICAL_RISK_PATTERN
 from urllib.parse import urlparse
 
 DISCLOSURE = re.compile(
@@ -21,6 +22,7 @@ MEDICAL = re.compile(
 )
 
 RISK = re.compile(
+    MEDICAL_RISK_PATTERN + r'|' +
     r'早期発見|ステージ\s*[1１一]|全身.{0,8}がん|がんリスク|'
     r'検出感度|特異度|人間ドック.{0,12}(?:代わり|比較|安い)|'
     r'(?:必ず|絶対|確実に).{0,12}(?:治|改善|効|発見)|'
