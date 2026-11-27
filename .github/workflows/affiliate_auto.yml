@@ -500,7 +500,7 @@ jobs:
               )
           ]
 
-          if errors:
+          if errors or result.get('batch_status') == 'stopped' or result.get('unhandled_tasks', 0) > 0:
               print(
                   'ERROR: Article or creative generation failed.',
                   file=sys.stderr

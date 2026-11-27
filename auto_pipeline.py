@@ -694,11 +694,13 @@ def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
             print('新規生成対象なし：' + ('有効な登録案件がありません' if not items else '全テーマ使用済み。新規案件を登録してください'), flush=True)
         report = []
         completed = 0
+        stop_reason = None
 
         for item, key, angle, keyword, focus in tasks:
             from run_controls import active_budget
             budget = active_budget.get()
             if budget is not None and budget.report()['remaining'] == 0:
+                stop_reason = 'generation_budget_exhausted'
                 break
             if completed >= limit:
                 break
@@ -987,6 +989,7 @@ def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
                         except Exception as history_exc:
                             report.append({'title': title, 'status': 'error', 'wp_id': wp_id,
                                            'reason': 'WordPress下書き保存済み・履歴保存失敗: ' + safe_error(history_exc)})
+                            stop_reason = 'history_write_failed'
                             break
                         if draft_index is not None:
                             draft_index.save(index_scope, key, md)
@@ -1023,6 +1026,7 @@ def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
                         keyword, title, wp_id, 'draft'
                     )
                 except Exception as history_exc:
+                    stop_reason = 'history_write_failed'
                     report.append({
                         'title': title,
                         'status': 'error',
@@ -1063,6 +1067,7 @@ def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
                 from stage25_30 import retry_kind
                 from run_controls import BudgetExhausted
                 if isinstance(exc, BudgetExhausted) or retry_kind(exc) == 'stop_batch':
+                    stop_reason = 'generation_budget_exhausted' if isinstance(exc, BudgetExhausted) else 'fatal_provider_error'
                     break
 
             time.sleep(1)
@@ -1080,7 +1085,9 @@ def _run_batch(limit=5, dry_run=False, preview=False, preview_product=""):
             'editorial_planning': __import__('editorial_planning').planning_report(
                 [dict(row, id=row.get('key')) for row in history if isinstance(row, dict)],
                 datetime.now(timezone.utc)),
-            'batch_status': ('no_enabled_products' if not items else 'topics_exhausted' if not tasks else 'processed')
+            'stop_reason': stop_reason,
+            'unhandled_tasks': max(0, len(tasks) - len(report)),
+            'batch_status': ('stopped' if stop_reason else 'no_enabled_products' if not items else 'topics_exhausted' if not tasks else 'processed')
         }
 
 

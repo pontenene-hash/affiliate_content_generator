@@ -19,7 +19,9 @@ def build_dashboard(batch):
                           'status': status[:80],
                           'issue_count': len(row.get('quality', {}).get('issues', []))
                           if isinstance(row.get('quality'), dict) else 0})
-    return {'schema': 1, 'status_counts': dict(sorted(statuses.items())),
+    return {'schema': 1, 'batch_status': batch.get('batch_status', 'unknown'),
+            'stop_reason': batch.get('stop_reason'),
+            'unhandled_tasks': batch.get('unhandled_tasks'), 'status_counts': dict(sorted(statuses.items())),
             'attention': attention,
             'generation_attempt_budget': batch.get('generation_attempt_budget', {}),
             'planning': batch.get('editorial_planning', {}),
@@ -63,7 +65,9 @@ def render_github_summary(batch, job_status=None):
                      'skipped': 'スキップ'}
     job_label = status_labels.get(str(job_status), '不明')
     lines = ['## PONTE 記事生成レポート', '', f'GitHub Actions状態: {job_label}',
-             f"処理件数: {int(batch.get('processed', 0) or 0)}", '',
+             f"処理件数: {int(batch.get('processed', 0) or 0)}",
+             '停止理由: ' + {'generation_budget_exhausted': '生成回数上限', 'history_write_failed': '履歴保存失敗', 'fatal_provider_error': '継続不能な外部処理エラー'}.get(batch.get('stop_reason'), '停止報告なし（成功保証ではありません）'),
+             '未処理件数: ' + (str(int(batch['unhandled_tasks'])) if batch.get('unhandled_tasks') is not None else '不明'), '',
              '| 状態 | 件数 |', '| --- | ---: |']
     for status, count in sorted(counts.items(), key=lambda pair: str(pair[0])):
         # Status values originate in the report; keep Markdown structure inert.
