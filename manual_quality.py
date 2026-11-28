@@ -31,13 +31,15 @@ def review_manual_outputs(result, plan, assets):
             ignored |= AFFILIATE_ONLY
         issues = [i for i in review['issues'] if i['code'] not in ignored]
         sections[name] = {'issues': issues, 'content_sha256': hashlib.sha256(text.encode()).hexdigest()}
+    from editorial_review import editorial_review
+    editorial = editorial_review(outputs['article'], result.get('evidence', []))
     missing_context = not context
     return {
-        'schema': 1, 'publication_approved': False, 'human_review_required': True,
+        'editorial': editorial, 'evidence_records': result.get('evidence', []), 'schema': 1, 'publication_approved': False, 'human_review_required': True,
         'status': 'review_required', 'context_missing': missing_context,
         'sections': sections,
-        'issue_count': sum(len(s['issues']) for s in sections.values()),
-        'review_sha256': hashlib.sha256(json.dumps({'outputs': outputs, 'context': context, 'mode': mode},
+        'issue_count': sum(len(s['issues']) for s in sections.values()) + len(editorial['findings']),
+        'review_sha256': hashlib.sha256(json.dumps({'outputs': outputs, 'context': context, 'mode': mode, 'evidence': result.get('evidence', [])},
                                         ensure_ascii=False, sort_keys=True).encode()).hexdigest(),
         'limitations': '文章の機械チェックです。根拠・医学的正確性・適法性・画像内の文言は未確認。調査欄の編集は元の参照資料を変更しません。',
     }

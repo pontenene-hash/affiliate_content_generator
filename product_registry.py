@@ -33,7 +33,10 @@ def parse_ad_code(code, asp='A8.net'):
 def github_config():
     token = os.environ.get('GITHUB_TOKEN', '').strip()
     repo = os.environ.get('GITHUB_REPOSITORY', '').strip()
-    branch = 'main'  # Shared product registry; independent of workflow branch.
+    # V2 development must never silently write the production registry.
+    branch = os.environ.get('PONTE_REGISTRY_BRANCH', 'feature-affiliate-v2-validation').strip()
+    if not branch or any(x in branch for x in ('..', '@{', '\\', ' ')) or branch.startswith('/'):
+        raise ValueError('PONTE_REGISTRY_BRANCHを確認してください')
     if token and re.fullmatch(r'[\w.-]+/[\w.-]+', repo):
         return token, repo, branch
     return None

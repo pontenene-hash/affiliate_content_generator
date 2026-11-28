@@ -777,6 +777,11 @@ def render_downloads(result: dict, plan: dict, assets: dict) -> None:
             for issue in detail["issues"]:
                 st.write(f"{labels[section]}：{issue['message']}")
         st.caption(review["limitations"])
+        st.write("読みやすさ・根拠の確認")
+        for finding in review["editorial"]["findings"]:
+            st.warning(finding["action"])
+            st.write(finding["detail"])
+        st.caption(review["editorial"]["limitations"])
     st.info("ダウンロードファイルは新しいタブで開きます。元のアプリ画面はそのまま残るため、ブラウザの元のタブを選ぶと戻れます。ファイル名には生成日時が付きます。")
     new_tab_download_button(
         "📦 すべてのファイルを一括ダウンロード",
@@ -1071,9 +1076,15 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
     finally:
         client.close()
 
+from workbench_ui import render_resume
+render_resume(st)
 result = st.session_state.get("affiliate_result")
 plan = st.session_state.get("affiliate_social_plan")
 assets = st.session_state.get("affiliate_sales_assets", {})
+from workbench_ui import render_operations, render_revisions
+render_operations(st)
+if result:
+    render_revisions(st, result)
 if result and plan:
     st.divider()
     edit_key = result.get("generated_at", "current")
@@ -1130,6 +1141,18 @@ if result and plan:
                 key=f"edit_prompts_{edit_key}",
             )
     with download_tab:
+        with st.expander("記述と出典の対応を記録（任意）"):
+            import pandas as pd
+            from improvement_workbench import digest
+            st.caption("本文の該当文、出典URL、確認日、原文引用を1行ずつ記録します。文字一致は事実確認の代わりにはなりません。")
+            evidence_rows = result.get("evidence", [])
+            fields = ["claim", "source_url", "checked_on", "quote"]
+            valid_rows = [{k: row.get(k, "") for k in fields} for row in evidence_rows if isinstance(row, dict)]
+            edited_evidence = st.data_editor(pd.DataFrame(valid_rows, columns=fields), num_rows="dynamic", hide_index=True,
+                column_config={"claim": "本文の該当文", "source_url": "出典URL（HTTPS）",
+                               "checked_on": "確認日（YYYY-MM-DD）", "quote": "原文引用"},
+                key=f"evidence_table_{edit_key}_{digest(evidence_rows)[:12]}")
+            result["evidence"] = edited_evidence.fillna("").to_dict("records")
         render_downloads(result, plan, assets)
 elif result:
     st.header("完成した本文")
