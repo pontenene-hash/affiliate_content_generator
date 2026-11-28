@@ -710,6 +710,10 @@ def download_payloads(result: dict, plan: dict, assets: dict) -> tuple[str, dict
         f"affiliate_social_posts_{stamp}.txt": result.get("social_text_override", social_text(plan)).encode("utf-8-sig"),
         f"affiliate_creative_prompts_{stamp}.md": result.get("creative_prompt_override", creative_prompt_text(plan)).encode("utf-8-sig"),
     }
+    from manual_quality import review_manual_outputs
+    files[f"quality_review_{stamp}.json"] = json.dumps(
+        review_manual_outputs(result, plan, assets), ensure_ascii=False, indent=2
+    ).encode("utf-8")
     return stamp, files
 
 
@@ -763,6 +767,16 @@ def new_tab_download_button(
 def render_downloads(result: dict, plan: dict, assets: dict) -> None:
     stamp, files = download_payloads(result, plan, assets)
     st.header("ダウンロード")
+    review = json.loads(files[f"quality_review_{stamp}.json"])
+    st.warning(f"公開前に人の確認が必要です。現在の編集内容の確認項目：{review['issue_count']}件（0件でも公開承認ではありません）。")
+    if review["context_missing"]:
+        st.warning("以前の生成結果には確認用の商品・参照情報がありません。根拠とリンクを確認してください。")
+    with st.expander("文章チェックの詳細", expanded=bool(review["issue_count"])):
+        for section, detail in review["sections"].items():
+            labels = {"article": "本文", "landing_page": "LP", "gbp_post": "GBP", "store_pop": "店内POP", "social": "SNS", "creative": "制作プロンプト"}
+            for issue in detail["issues"]:
+                st.write(f"{labels[section]}：{issue['message']}")
+        st.caption(review["limitations"])
     st.info("ダウンロードファイルは新しいタブで開きます。元のアプリ画面はそのまま残るため、ブラウザの元のタブを選ぶと戻れます。ファイル名には生成日時が付きます。")
     new_tab_download_button(
         "📦 すべてのファイルを一括ダウンロード",
@@ -776,10 +790,13 @@ def render_downloads(result: dict, plan: dict, assets: dict) -> None:
         ".md": "text/markdown",
         ".html": "text/html",
         ".txt": "text/plain",
+        ".json": "application/json",
     }
     st.subheader("個別ダウンロード")
     for filename, data in files.items():
-        if "_wordpress_" in filename:
+        if filename.startswith("quality_review_"):
+            label = "編集後の文章チェック結果"
+        elif "_wordpress_" in filename:
             label = "WordPress用HTML"
         elif "_social_" in filename:
             label = "SNS投稿文"
@@ -1042,6 +1059,9 @@ if st.button("記事を生成する", type="primary", use_container_width=True):
             st.session_state["affiliate_result"] = {
                 "intent": intent, "outline": outline, "article": article,
                 "page": page, "generated_at": generated_at, "sales_mode": sales_mode,
+                "quality_context": {"product_name": product_name.strip() or page.get("title", ""),
+                                    "destination_url": safe_destination_url, "sales_mode": sales_mode,
+                                    "source_text": page.get("text", "")},
             }
             st.session_state["affiliate_social_plan"] = plan
             st.session_state["affiliate_sales_assets"] = assets
@@ -1093,6 +1113,7 @@ if result and plan:
         for item in assets.get("compliance_check", []):
             st.write(f"- {item}")
     with social_tab:
+        st.info("下のプレビューは生成時の内容です。まとめ編集した文章はダウンロードと文章チェックに反映されます。")
         render_social_results(plan)
         with st.expander("SNS投稿文をまとめて編集", expanded=False):
             result["social_text_override"] = st.text_area(
